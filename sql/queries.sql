@@ -1,15 +1,17 @@
--- Dialect-portable: positional placeholders are introduced via sqlc.arg() so
--- both `?` (sqlite) and `$N` (postgres) backends generate clean code.
+-- Dialect-portable queries: named args via sqlc.arg() so both `?` (sqlite)
+-- and `$N` (postgres) backends generate clean code. Keep this file ASCII
+-- only and avoid apostrophes in comments (sqlc parser is fragile here).
 
 -- name: CreateIssue :exec
 INSERT INTO issues (
     id, content_hash, title, description, design, acceptance_criteria, notes,
     status, priority, issue_type, assignee, estimated_minutes,
-    created_at, created_by, owner, updated_at, closed_at, closed_by_session,
+    created_at, created_by, owner, updated_at, started_at, closed_at, closed_by_session,
     external_ref, spec_id, metadata, source_repo, source_system, close_reason,
-    sender, ephemeral, pinned, is_template, wisp_type, mol_type, role_type,
+    sender, ephemeral, pinned, is_template,
+    wisp_type, mol_type, role_type,
     event_kind, actor, target, payload,
-    started_at, due_at, defer_until
+    due_at, defer_until
 ) VALUES (
     sqlc.arg('id'), sqlc.arg('content_hash'), sqlc.arg('title'),
     sqlc.arg('description'), sqlc.arg('design'), sqlc.arg('acceptance_criteria'),
@@ -17,15 +19,16 @@ INSERT INTO issues (
     sqlc.arg('status'), sqlc.arg('priority'), sqlc.arg('issue_type'),
     sqlc.arg('assignee'), sqlc.arg('estimated_minutes'),
     sqlc.arg('created_at'), sqlc.arg('created_by'), sqlc.arg('owner'),
-    sqlc.arg('updated_at'), sqlc.arg('closed_at'), sqlc.arg('closed_by_session'),
+    sqlc.arg('updated_at'), sqlc.arg('started_at'), sqlc.arg('closed_at'),
+    sqlc.arg('closed_by_session'),
     sqlc.arg('external_ref'), sqlc.arg('spec_id'), sqlc.arg('metadata'),
     sqlc.arg('source_repo'), sqlc.arg('source_system'), sqlc.arg('close_reason'),
     sqlc.arg('sender'), sqlc.arg('ephemeral'), sqlc.arg('pinned'),
-    sqlc.arg('is_template'), sqlc.arg('wisp_type'), sqlc.arg('mol_type'),
-    sqlc.arg('role_type'),
+    sqlc.arg('is_template'),
+    sqlc.arg('wisp_type'), sqlc.arg('mol_type'), sqlc.arg('role_type'),
     sqlc.arg('event_kind'), sqlc.arg('actor'), sqlc.arg('target'),
     sqlc.arg('payload'),
-    sqlc.arg('started_at'), sqlc.arg('due_at'), sqlc.arg('defer_until')
+    sqlc.arg('due_at'), sqlc.arg('defer_until')
 );
 
 -- name: GetIssue :one
@@ -34,10 +37,10 @@ SELECT * FROM issues WHERE id = sqlc.arg('id');
 -- name: DeleteIssue :execrows
 DELETE FROM issues WHERE id = sqlc.arg('id');
 
--- name: ChildCount :one
--- count of issues that have a parent-child dep pointing AT them from this parent
-SELECT COUNT(*) FROM dependencies
-WHERE depends_on_id = sqlc.arg('parent_id') AND type = 'parent-child';
+-- name: CountIssuesWithPrefix :one
+-- Used by the adaptive id-length selector: more issues -> longer hash.
+SELECT COUNT(*) FROM issues
+WHERE id LIKE sqlc.arg('like_pattern');
 
 -- name: AddDependency :exec
 INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
@@ -57,7 +60,6 @@ WHERE issue_id = sqlc.arg('id') OR depends_on_id = sqlc.arg('id')
 ORDER BY created_at;
 
 -- name: BlocksReachableFrom :many
--- Forward step in the cycle-detection BFS: who does `issue_id` block?
 SELECT depends_on_id FROM dependencies
 WHERE issue_id = sqlc.arg('issue_id') AND type = sqlc.arg('type');
 
@@ -78,27 +80,32 @@ VALUES (sqlc.arg('id'), sqlc.arg('issue_id'), sqlc.arg('author'),
 -- name: ListComments :many
 SELECT * FROM comments WHERE issue_id = sqlc.arg('issue_id') ORDER BY created_at;
 
--- name: AddEvent :exec
-INSERT INTO events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at)
-VALUES (sqlc.arg('id'), sqlc.arg('issue_id'), sqlc.arg('event_type'),
-        sqlc.arg('actor'), sqlc.arg('old_value'), sqlc.arg('new_value'),
-        sqlc.arg('comment'), sqlc.arg('created_at'));
+-- name: GetConfigValue :one
+SELECT value FROM config WHERE key = sqlc.arg('key');
 
--- name: ListEvents :many
-SELECT * FROM events WHERE issue_id = sqlc.arg('issue_id') ORDER BY created_at;
+-- name: SetConfigValue :exec
+-- Use `excluded.value` (the standard ON CONFLICT pseudo-row) to avoid binding
+-- the value parameter twice. sqlc named-arg expansion mangles repeated args
+-- in INSERT...ON CONFLICT...DO UPDATE statements.
+INSERT INTO config (key, value) VALUES (sqlc.arg('key'), sqlc.arg('value'))
+ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+
+-- name: ListConfig :many
+SELECT key, value FROM config ORDER BY key;
 
 -- name: NextChildIndex :one
--- Atomically increment the per-parent counter and return the new value. The
--- ON CONFLICT ... DO UPDATE ... RETURNING form works on both SQLite (>=3.35)
--- and Postgres, which is what the project targets.
 INSERT INTO child_counters (parent_id, last_child)
 VALUES (sqlc.arg('parent_id'), 1)
 ON CONFLICT(parent_id) DO UPDATE SET last_child = child_counters.last_child + 1
 RETURNING last_child;
 
+-- name: NextCounterID :one
+INSERT INTO issue_counter (prefix, last_id)
+VALUES (sqlc.arg('prefix'), 1)
+ON CONFLICT(prefix) DO UPDATE SET last_id = issue_counter.last_id + 1
+RETURNING last_id;
+
 -- name: ReadyAt :many
--- Open, non-ephemeral, non-template, no `blocks` dep from a non-{closed,pinned}
--- issue, not deferred. `now` is supplied by the caller for portability.
 SELECT i.* FROM issues i
 WHERE i.status = 'open'
   AND i.ephemeral = 0

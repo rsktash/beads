@@ -1,7 +1,9 @@
-// Package store is the persistence layer for beads. It wraps sqlc-generated
-// per-engine code (SQLite, Postgres) behind one Go API. Static queries are
-// type-checked by sqlc at codegen time; the small amount of dynamic SQL
-// (filtered list, partial update) is hand-written against database/sql.
+// Package store is the persistence layer for bd. It wraps sqlc-generated
+// per-engine code (SQLite, Postgres) behind one Go API.
+//
+// Project settings (issue prefix, id mode, custom statuses/types) live in
+// the DB `config` table — same DB, every client agrees. Connection state
+// (just the DSN) lives in .bd/config on disk; see internal/config.
 package store
 
 import (
@@ -32,9 +34,24 @@ const (
 	DriverPostgres Driver = "postgres"
 )
 
+// Config keys recognised in the in-DB `config` table.
+const (
+	CfgIssuePrefix       = "issue_prefix"
+	CfgIssueIDMode       = "issue_id_mode" // "hash" (default) or "counter"
+	CfgStatusCustom      = "status.custom" // JSON array of extra status names
+	CfgTypesCustom       = "types.custom"  // JSON array of extra issue types
+	CfgMaxCollisionProb  = "max_collision_prob"
+	CfgMinHashLength     = "min_hash_length"
+	CfgMaxHashLength     = "max_hash_length"
+	IDModeHash           = "hash"
+	IDModeCounter        = "counter"
+)
+
 var (
-	ErrNotFound = errors.New("not found")
-	ErrCycle    = errors.New("dependency would create a cycle")
+	ErrNotFound      = errors.New("not found")
+	ErrCycle         = errors.New("dependency would create a cycle")
+	ErrNoPrefix      = errors.New("no issue_prefix configured (run `bd init --prefix <name>`)")
+	ErrDepthExceeded = errors.New("hierarchy depth exceeded")
 )
 
 //go:embed schema.sqlite.sql
@@ -43,34 +60,15 @@ var schemaSQLite string
 //go:embed schema.postgres.sql
 var schemaPostgres string
 
-// Store is the canonical handle. Open with Open(dsn) or OpenWithPrefix(dsn, p).
+// Store is the canonical handle.
 type Store struct {
 	db     *sql.DB
 	driver Driver
-	prefix string            // id prefix; "<prefix>-<hash>" form
-	sqlite *sqlitedb.Queries // non-nil iff driver == DriverSQLite
-	pg     *pgdb.Queries     // non-nil iff driver == DriverPostgres
+	sqlite *sqlitedb.Queries
+	pg     *pgdb.Queries
 }
 
-// Prefix returns the id prefix used for newly created beads.
-func (s *Store) Prefix() string { return s.prefix }
-
-// SetPrefix overrides the id prefix on an open Store. Useful for migrate, where
-// the destination should adopt the source's prefix.
-func (s *Store) SetPrefix(p string) { s.prefix = p }
-
-// Open is shorthand for OpenWithPrefix(ctx, dsn, "") which auto-derives the
-// prefix from the DSN.
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	return OpenWithPrefix(ctx, dsn, "")
-}
-
-// OpenWithPrefix accepts:
-//   - sqlite path or sqlite:... DSN
-//   - postgres://user:pass@host/db?sslmode=disable
-//
-// If prefix is empty it's derived from the DSN's database name.
-func OpenWithPrefix(ctx context.Context, dsn, prefix string) (*Store, error) {
 	driver, conn, err := parseDSN(dsn)
 	if err != nil {
 		return nil, err
@@ -91,10 +89,7 @@ func OpenWithPrefix(ctx context.Context, dsn, prefix string) (*Store, error) {
 			return nil, fmt.Errorf("sqlite pragmas: %w", err)
 		}
 	}
-	if prefix == "" {
-		prefix = derivePrefix(dsn)
-	}
-	s := &Store{db: db, driver: driver, prefix: prefix}
+	s := &Store{db: db, driver: driver}
 	switch driver {
 	case DriverSQLite:
 		s.sqlite = sqlitedb.New(db)
@@ -144,34 +139,186 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
-// CreateIssue inserts a new issue. If i.ID is empty an id of the form
-// "<prefix>-<base36hash>" is generated from the bead's content; on collision
-// the nonce is incremented and the hash recomputed.
-func (s *Store) CreateIssue(ctx context.Context, i *beads.Issue) error {
-	if i.ID == "" {
-		seed := i.Title + "|" + i.Description + "|" + i.CreatedBy
-		for nonce := uint64(0); nonce < 32; nonce++ {
-			id, err := idgen.New(s.prefix, seed, idgen.DefaultLen, nonce)
-			if err != nil {
-				return err
-			}
-			i.ID = id
-			err = s.insertIssue(ctx, i)
-			if err == nil {
-				return nil
-			}
-			if !isUniqueViolation(err) {
-				return err
-			}
+// ---------- in-DB config ----------
+
+// GetConfig returns the value for a config key, or "" if unset.
+func (s *Store) GetConfig(ctx context.Context, key string) (string, error) {
+	var v string
+	var err error
+	switch s.driver {
+	case DriverSQLite:
+		v, err = s.sqlite.GetConfigValue(ctx, key)
+	case DriverPostgres:
+		v, err = s.pg.GetConfigValue(ctx, key)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetConfig upserts a config key.
+func (s *Store) SetConfig(ctx context.Context, key, value string) error {
+	switch s.driver {
+	case DriverSQLite:
+		return s.sqlite.SetConfigValue(ctx, sqlitedb.SetConfigValueParams{Key: key, Value: value})
+	case DriverPostgres:
+		return s.pg.SetConfigValue(ctx, pgdb.SetConfigValueParams{Key: key, Value: value})
+	}
+	return fmt.Errorf("unknown driver")
+}
+
+// ListConfig returns all key/value pairs (excludes empty rows).
+func (s *Store) ListConfig(ctx context.Context) (map[string]string, error) {
+	out := map[string]string{}
+	switch s.driver {
+	case DriverSQLite:
+		rows, err := s.sqlite.ListConfig(ctx)
+		if err != nil {
+			return nil, err
 		}
-		return fmt.Errorf("idgen: exhausted nonces")
+		for _, r := range rows {
+			out[r.Key] = r.Value
+		}
+	case DriverPostgres:
+		rows, err := s.pg.ListConfig(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			out[r.Key] = r.Value
+		}
+	}
+	return out, nil
+}
+
+// Prefix returns the configured issue_prefix, or ErrNoPrefix if unset.
+func (s *Store) Prefix(ctx context.Context) (string, error) {
+	v, err := s.GetConfig(ctx, CfgIssuePrefix)
+	if err != nil {
+		return "", err
+	}
+	v = strings.TrimSuffix(v, "-")
+	if v == "" {
+		return "", ErrNoPrefix
+	}
+	return v, nil
+}
+
+// ---------- issues ----------
+
+// CreateIssue inserts a new issue. If i.ID is empty an id is allocated based
+// on the configured issue_id_mode (hash or counter).
+func (s *Store) CreateIssue(ctx context.Context, i *beads.Issue) error {
+	now := time.Now().UTC()
+	if i.CreatedAt.IsZero() {
+		i.CreatedAt = now
+	}
+	i.UpdatedAt = now
+	if i.Status == "" {
+		i.Status = beads.StatusOpen
+	}
+	if i.Type == "" {
+		i.Type = beads.TypeTask
+	}
+	if i.Metadata == "" {
+		i.Metadata = "{}"
+	}
+
+	if i.ID == "" {
+		id, err := s.allocateID(ctx, i)
+		if err != nil {
+			return err
+		}
+		i.ID = id
 	}
 	return s.insertIssue(ctx, i)
 }
 
-// NextChildID atomically allocates the next hierarchical id under parent
-// ("parent.1", "parent.2", ...). Uses the child_counters table.
+func (s *Store) allocateID(ctx context.Context, i *beads.Issue) (string, error) {
+	prefix, err := s.Prefix(ctx)
+	if err != nil {
+		return "", err
+	}
+	mode, _ := s.GetConfig(ctx, CfgIssueIDMode)
+	if mode == IDModeCounter {
+		var n int64
+		switch s.driver {
+		case DriverSQLite:
+			n, err = s.sqlite.NextCounterID(ctx, prefix)
+		case DriverPostgres:
+			v, e := s.pg.NextCounterID(ctx, prefix)
+			n, err = int64(v), e
+		}
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s-%d", prefix, n), nil
+	}
+
+	// Hash mode: adaptive length grows with project size.
+	count, err := s.countIssuesWithPrefix(ctx, prefix)
+	if err != nil {
+		return "", err
+	}
+	cfg := s.adaptiveCfg(ctx)
+	baseLen := idgen.AdaptiveLength(count, cfg)
+	for length := baseLen; length <= cfg.MaxLength; length++ {
+		for nonce := 0; nonce < 10; nonce++ {
+			cand := idgen.GenerateHashID(prefix, i.Title, i.Description, i.CreatedBy, i.CreatedAt, length, nonce)
+			if existing, _ := s.GetIssue(ctx, cand); existing == nil {
+				return cand, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("idgen: exhausted lengths %d-%d * 10 nonces", baseLen, cfg.MaxLength)
+}
+
+func (s *Store) adaptiveCfg(ctx context.Context) idgen.AdaptiveConfig {
+	cfg := idgen.DefaultAdaptive()
+	if v, _ := s.GetConfig(ctx, CfgMaxCollisionProb); v != "" {
+		var p float64
+		_, _ = fmt.Sscanf(v, "%f", &p)
+		if p > 0 {
+			cfg.MaxCollisionProbability = p
+		}
+	}
+	if v, _ := s.GetConfig(ctx, CfgMinHashLength); v != "" {
+		var n int
+		_, _ = fmt.Sscanf(v, "%d", &n)
+		if n > 0 {
+			cfg.MinLength = n
+		}
+	}
+	if v, _ := s.GetConfig(ctx, CfgMaxHashLength); v != "" {
+		var n int
+		_, _ = fmt.Sscanf(v, "%d", &n)
+		if n > 0 {
+			cfg.MaxLength = n
+		}
+	}
+	return cfg
+}
+
+func (s *Store) countIssuesWithPrefix(ctx context.Context, prefix string) (int, error) {
+	pattern := prefix + "-%"
+	switch s.driver {
+	case DriverSQLite:
+		n, err := s.sqlite.CountIssuesWithPrefix(ctx, pattern)
+		return int(n), err
+	case DriverPostgres:
+		n, err := s.pg.CountIssuesWithPrefix(ctx, pattern)
+		return int(n), err
+	}
+	return 0, fmt.Errorf("unknown driver")
+}
+
+// NextChildID atomically allocates a hierarchical id under parent. Caps at
+// idgen.MaxHierarchyDepth.
 func (s *Store) NextChildID(ctx context.Context, parent string) (string, error) {
+	if idgen.HierarchyDepth(parent) >= idgen.MaxHierarchyDepth {
+		return "", ErrDepthExceeded
+	}
 	var n int
 	switch s.driver {
 	case DriverSQLite:
@@ -191,20 +338,6 @@ func (s *Store) NextChildID(ctx context.Context, parent string) (string, error) 
 }
 
 func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
-	now := time.Now().UTC()
-	if i.CreatedAt.IsZero() {
-		i.CreatedAt = now
-	}
-	i.UpdatedAt = now
-	if i.Status == "" {
-		i.Status = beads.StatusOpen
-	}
-	if i.Type == "" {
-		i.Type = beads.TypeTask
-	}
-	if i.Metadata == "" {
-		i.Metadata = "{}"
-	}
 	switch s.driver {
 	case DriverSQLite:
 		return s.sqlite.CreateIssue(ctx, sqlitedb.CreateIssueParams{
@@ -215,7 +348,8 @@ func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
 			IssueType: string(i.Type), Assignee: i.Assignee,
 			EstimatedMinutes: int64(i.EstimatedMinutes),
 			CreatedAt:        i.CreatedAt, CreatedBy: i.CreatedBy, Owner: i.Owner,
-			UpdatedAt: i.UpdatedAt, ClosedAt: nullTime(i.ClosedAt),
+			UpdatedAt: i.UpdatedAt,
+			StartedAt: nullTime(i.StartedAt), ClosedAt: nullTime(i.ClosedAt),
 			ClosedBySession: i.ClosedBySession,
 			ExternalRef:     i.ExternalRef, SpecID: i.SpecID, Metadata: i.Metadata,
 			SourceRepo: i.SourceRepo, SourceSystem: i.SourceSystem, CloseReason: i.CloseReason,
@@ -224,8 +358,7 @@ func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
 			IsTemplate: boolToInt64(i.IsTemplate),
 			WispType:   i.WispType, MolType: i.MolType, RoleType: i.RoleType,
 			EventKind: i.EventKind, Actor: i.Actor, Target: i.Target, Payload: i.Payload,
-			StartedAt: nullTime(i.StartedAt), DueAt: nullTime(i.DueAt),
-			DeferUntil: nullTime(i.DeferUntil),
+			DueAt:     nullTime(i.DueAt), DeferUntil: nullTime(i.DeferUntil),
 		})
 	case DriverPostgres:
 		return s.pg.CreateIssue(ctx, pgdb.CreateIssueParams{
@@ -236,7 +369,8 @@ func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
 			IssueType: string(i.Type), Assignee: i.Assignee,
 			EstimatedMinutes: int32(i.EstimatedMinutes),
 			CreatedAt:        i.CreatedAt, CreatedBy: i.CreatedBy, Owner: i.Owner,
-			UpdatedAt: i.UpdatedAt, ClosedAt: nullTime(i.ClosedAt),
+			UpdatedAt: i.UpdatedAt,
+			StartedAt: nullTime(i.StartedAt), ClosedAt: nullTime(i.ClosedAt),
 			ClosedBySession: i.ClosedBySession,
 			ExternalRef:     i.ExternalRef, SpecID: i.SpecID, Metadata: i.Metadata,
 			SourceRepo: i.SourceRepo, SourceSystem: i.SourceSystem, CloseReason: i.CloseReason,
@@ -245,8 +379,7 @@ func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
 			IsTemplate: boolToInt32(i.IsTemplate),
 			WispType:   i.WispType, MolType: i.MolType, RoleType: i.RoleType,
 			EventKind: i.EventKind, Actor: i.Actor, Target: i.Target, Payload: i.Payload,
-			StartedAt: nullTime(i.StartedAt), DueAt: nullTime(i.DueAt),
-			DeferUntil: nullTime(i.DeferUntil),
+			DueAt:     nullTime(i.DueAt), DeferUntil: nullTime(i.DeferUntil),
 		})
 	}
 	return fmt.Errorf("unknown driver")
@@ -284,12 +417,10 @@ type ListFilter struct {
 	Limit    int
 }
 
-// ListIssues is dynamic (variable WHERE clauses) so it's hand-written.
-// All static queries above use sqlc-generated code.
 func (s *Store) ListIssues(ctx context.Context, f ListFilter) ([]beads.Issue, error) {
 	var args []any
 	var where []string
-	add := func(clause string, v any) { where = append(where, clause); args = append(args, v) }
+	add := func(c string, v any) { where = append(where, c); args = append(args, v) }
 	if f.Status != nil {
 		add("status=?", string(*f.Status))
 	}
@@ -446,49 +577,46 @@ func (s *Store) DeleteIssue(ctx context.Context, id string) error {
 	return nil
 }
 
-// AddDependency creates a directed edge issue -> depends_on. For type=blocks
-// it rejects cycles (direct + transitive).
-func (s *Store) AddDependency(ctx context.Context, dep beads.Dependency) error {
-	if dep.IssueID == dep.DependsOnID {
+// ---------- dependencies ----------
+
+func (s *Store) AddDependency(ctx context.Context, d beads.Dependency) error {
+	if d.IssueID == d.DependsOnID {
 		return fmt.Errorf("self-dependency not allowed")
 	}
-	if _, err := s.GetIssue(ctx, dep.IssueID); err != nil {
-		return fmt.Errorf("issue %s: %w", dep.IssueID, err)
+	if _, err := s.GetIssue(ctx, d.IssueID); err != nil {
+		return fmt.Errorf("issue %s: %w", d.IssueID, err)
 	}
-	if _, err := s.GetIssue(ctx, dep.DependsOnID); err != nil {
-		return fmt.Errorf("depends_on %s: %w", dep.DependsOnID, err)
+	if _, err := s.GetIssue(ctx, d.DependsOnID); err != nil {
+		return fmt.Errorf("depends_on %s: %w", d.DependsOnID, err)
 	}
-	if dep.Type == beads.DepBlocks {
-		// cycle iff issue is already (transitively) blocked by depends_on.
-		// i.e. depends_on -*-> issue means issue currently *waits on* depends_on
-		// transitively; adding issue->blocks->depends_on closes the loop.
-		reach, err := s.forwardBlocks(ctx, dep.DependsOnID)
+	if d.Type == beads.DepBlocks {
+		reach, err := s.forwardBlocks(ctx, d.DependsOnID)
 		if err != nil {
 			return err
 		}
-		if _, hit := reach[dep.IssueID]; hit {
+		if _, hit := reach[d.IssueID]; hit {
 			return ErrCycle
 		}
 	}
-	if dep.CreatedAt.IsZero() {
-		dep.CreatedAt = time.Now().UTC()
+	if d.CreatedAt.IsZero() {
+		d.CreatedAt = time.Now().UTC()
 	}
-	if dep.Metadata == "" {
-		dep.Metadata = "{}"
+	if d.Metadata == "" {
+		d.Metadata = "{}"
 	}
 	var err error
 	switch s.driver {
 	case DriverSQLite:
 		err = s.sqlite.AddDependency(ctx, sqlitedb.AddDependencyParams{
-			IssueID: dep.IssueID, DependsOnID: dep.DependsOnID,
-			Type: string(dep.Type), CreatedAt: dep.CreatedAt,
-			CreatedBy: dep.CreatedBy, Metadata: dep.Metadata, ThreadID: dep.ThreadID,
+			IssueID: d.IssueID, DependsOnID: d.DependsOnID,
+			Type: string(d.Type), CreatedAt: d.CreatedAt,
+			CreatedBy: d.CreatedBy, Metadata: d.Metadata, ThreadID: d.ThreadID,
 		})
 	case DriverPostgres:
 		err = s.pg.AddDependency(ctx, pgdb.AddDependencyParams{
-			IssueID: dep.IssueID, DependsOnID: dep.DependsOnID,
-			Type: string(dep.Type), CreatedAt: dep.CreatedAt,
-			CreatedBy: dep.CreatedBy, Metadata: dep.Metadata, ThreadID: dep.ThreadID,
+			IssueID: d.IssueID, DependsOnID: d.DependsOnID,
+			Type: string(d.Type), CreatedAt: d.CreatedAt,
+			CreatedBy: d.CreatedBy, Metadata: d.Metadata, ThreadID: d.ThreadID,
 		})
 	}
 	if err != nil && isUniqueViolation(err) {
@@ -553,8 +681,40 @@ func (s *Store) ListDependencies(ctx context.Context, id string) ([]beads.Depend
 	return nil, fmt.Errorf("unknown driver")
 }
 
-// Ready returns issues that are open, non-ephemeral, non-template, not
-// deferred, and have no `blocks` dependency from a non-{closed,pinned} issue.
+func (s *Store) forwardBlocks(ctx context.Context, id string) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	queue := []string{id}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		var nexts []string
+		var err error
+		switch s.driver {
+		case DriverSQLite:
+			nexts, err = s.sqlite.BlocksReachableFrom(ctx, sqlitedb.BlocksReachableFromParams{
+				IssueID: cur, Type: string(beads.DepBlocks),
+			})
+		case DriverPostgres:
+			nexts, err = s.pg.BlocksReachableFrom(ctx, pgdb.BlocksReachableFromParams{
+				IssueID: cur, Type: string(beads.DepBlocks),
+			})
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range nexts {
+			if _, seen := out[n]; seen {
+				continue
+			}
+			out[n] = struct{}{}
+			queue = append(queue, n)
+		}
+	}
+	return out, nil
+}
+
+// ---------- ready ----------
+
 func (s *Store) Ready(ctx context.Context) ([]beads.Issue, error) {
 	now := sql.NullTime{Time: time.Now().UTC(), Valid: true}
 	switch s.driver {
@@ -582,7 +742,8 @@ func (s *Store) Ready(ctx context.Context) ([]beads.Issue, error) {
 	return nil, fmt.Errorf("unknown driver")
 }
 
-// AddLabel attaches a label to an issue. Idempotent.
+// ---------- labels ----------
+
 func (s *Store) AddLabel(ctx context.Context, issueID, label string) error {
 	var err error
 	switch s.driver {
@@ -624,6 +785,8 @@ func (s *Store) ListLabels(ctx context.Context, issueID string) ([]string, error
 	}
 	return nil, fmt.Errorf("unknown driver")
 }
+
+// ---------- comments ----------
 
 func (s *Store) AddComment(ctx context.Context, c *beads.Comment) error {
 	if c.ID == "" {
@@ -671,108 +834,8 @@ func (s *Store) ListComments(ctx context.Context, issueID string) ([]beads.Comme
 	return nil, fmt.Errorf("unknown driver")
 }
 
-func (s *Store) AddEvent(ctx context.Context, e *beads.Event) error {
-	if e.ID == "" {
-		e.ID = uuid.NewString()
-	}
-	if e.CreatedAt.IsZero() {
-		e.CreatedAt = time.Now().UTC()
-	}
-	switch s.driver {
-	case DriverSQLite:
-		return s.sqlite.AddEvent(ctx, sqlitedb.AddEventParams{
-			ID: e.ID, IssueID: e.IssueID, EventType: e.EventType, Actor: e.Actor,
-			OldValue: e.OldValue, NewValue: e.NewValue, Comment: e.Comment, CreatedAt: e.CreatedAt,
-		})
-	case DriverPostgres:
-		return s.pg.AddEvent(ctx, pgdb.AddEventParams{
-			ID: e.ID, IssueID: e.IssueID, EventType: e.EventType, Actor: e.Actor,
-			OldValue: e.OldValue, NewValue: e.NewValue, Comment: e.Comment, CreatedAt: e.CreatedAt,
-		})
-	}
-	return fmt.Errorf("unknown driver")
-}
+// ---------- helpers ----------
 
-func (s *Store) ListEvents(ctx context.Context, issueID string) ([]beads.Event, error) {
-	switch s.driver {
-	case DriverSQLite:
-		rows, err := s.sqlite.ListEvents(ctx, issueID)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]beads.Event, 0, len(rows))
-		for _, r := range rows {
-			out = append(out, beads.Event{
-				ID: r.ID, IssueID: r.IssueID, EventType: r.EventType, Actor: r.Actor,
-				OldValue: r.OldValue, NewValue: r.NewValue, Comment: r.Comment, CreatedAt: r.CreatedAt,
-			})
-		}
-		return out, nil
-	case DriverPostgres:
-		rows, err := s.pg.ListEvents(ctx, issueID)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]beads.Event, 0, len(rows))
-		for _, r := range rows {
-			out = append(out, beads.Event{
-				ID: r.ID, IssueID: r.IssueID, EventType: r.EventType, Actor: r.Actor,
-				OldValue: r.OldValue, NewValue: r.NewValue, Comment: r.Comment, CreatedAt: r.CreatedAt,
-			})
-		}
-		return out, nil
-	}
-	return nil, fmt.Errorf("unknown driver")
-}
-
-// ChildCount returns how many parent-child dependencies declare this issue as
-// the parent (depends_on). Informational only — for atomic next-id allocation
-// use NextChildID instead.
-func (s *Store) ChildCount(ctx context.Context, parent string) (int, error) {
-	switch s.driver {
-	case DriverSQLite:
-		n, err := s.sqlite.ChildCount(ctx, parent)
-		return int(n), err
-	case DriverPostgres:
-		n, err := s.pg.ChildCount(ctx, parent)
-		return int(n), err
-	}
-	return 0, fmt.Errorf("unknown driver")
-}
-
-func (s *Store) forwardBlocks(ctx context.Context, id string) (map[string]struct{}, error) {
-	out := map[string]struct{}{}
-	queue := []string{id}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		var nexts []string
-		var err error
-		switch s.driver {
-		case DriverSQLite:
-			nexts, err = s.sqlite.BlocksReachableFrom(ctx, sqlitedb.BlocksReachableFromParams{
-				IssueID: cur, Type: string(beads.DepBlocks),
-			})
-		case DriverPostgres:
-			nexts, err = s.pg.BlocksReachableFrom(ctx, pgdb.BlocksReachableFromParams{
-				IssueID: cur, Type: string(beads.DepBlocks),
-			})
-		}
-		if err != nil {
-			return nil, err
-		}
-		for _, n := range nexts {
-			if _, seen := out[n]; seen {
-				continue
-			}
-			out[n] = struct{}{}
-			queue = append(queue, n)
-		}
-	}
-	return out, nil
-}
-
-// rebind translates `?` placeholders in the dynamic queries to engine flavour.
 func (s *Store) rebind(q string) string {
 	if s.driver != DriverPostgres {
 		return q
@@ -789,52 +852,6 @@ func (s *Store) rebind(q string) string {
 		out.WriteRune(r)
 	}
 	return out.String()
-}
-
-// derivePrefix mirrors config.PrefixFromDSN but lives in store/ so the
-// package has zero coupling to config beyond the CLI layer. Keep the two in
-// sync.
-func derivePrefix(dsn string) string {
-	switch {
-	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
-		rest := dsn
-		if i := strings.Index(rest, "://"); i >= 0 {
-			rest = rest[i+3:]
-		}
-		if slash := strings.Index(rest, "/"); slash >= 0 {
-			rest = rest[slash+1:]
-			if q := strings.Index(rest, "?"); q >= 0 {
-				rest = rest[:q]
-			}
-			if rest != "" {
-				return rest
-			}
-		}
-	case strings.Contains(dsn, "tcp(") && strings.Contains(dsn, ")/"):
-		if i := strings.Index(dsn, ")/"); i >= 0 {
-			rest := dsn[i+2:]
-			if q := strings.Index(rest, "?"); q >= 0 {
-				rest = rest[:q]
-			}
-			if rest != "" {
-				return rest
-			}
-		}
-	}
-	base := dsn
-	if i := strings.LastIndexAny(base, "/\\"); i >= 0 {
-		base = base[i+1:]
-	}
-	for _, ext := range []string{".db", ".sqlite", ".sqlite3"} {
-		if strings.HasSuffix(base, ext) {
-			base = strings.TrimSuffix(base, ext)
-			break
-		}
-	}
-	if base == "" || base == "beads" {
-		return "bd"
-	}
-	return base
 }
 
 func nullTime(t *time.Time) sql.NullTime {

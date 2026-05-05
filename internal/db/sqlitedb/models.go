@@ -22,6 +22,11 @@ type Comment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Config struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 type Dependency struct {
 	IssueID     string    `json:"issue_id"`
 	DependsOnID string    `json:"depends_on_id"`
@@ -30,17 +35,6 @@ type Dependency struct {
 	CreatedBy   string    `json:"created_by"`
 	Metadata    string    `json:"metadata"`
 	ThreadID    string    `json:"thread_id"`
-}
-
-type Event struct {
-	ID        string    `json:"id"`
-	IssueID   string    `json:"issue_id"`
-	EventType string    `json:"event_type"`
-	Actor     string    `json:"actor"`
-	OldValue  string    `json:"old_value"`
-	NewValue  string    `json:"new_value"`
-	Comment   string    `json:"comment"`
-	CreatedAt time.Time `json:"created_at"`
 }
 
 type Issue struct {
@@ -60,6 +54,7 @@ type Issue struct {
 	CreatedBy          string       `json:"created_by"`
 	Owner              string       `json:"owner"`
 	UpdatedAt          time.Time    `json:"updated_at"`
+	StartedAt          sql.NullTime `json:"started_at"`
 	ClosedAt           sql.NullTime `json:"closed_at"`
 	ClosedBySession    string       `json:"closed_by_session"`
 	ExternalRef        string       `json:"external_ref"`
@@ -79,9 +74,13 @@ type Issue struct {
 	Actor              string       `json:"actor"`
 	Target             string       `json:"target"`
 	Payload            string       `json:"payload"`
-	StartedAt          sql.NullTime `json:"started_at"`
 	DueAt              sql.NullTime `json:"due_at"`
 	DeferUntil         sql.NullTime `json:"defer_until"`
+}
+
+type IssueCounter struct {
+	Prefix string `json:"prefix"`
+	LastID int64  `json:"last_id"`
 }
 
 type Label struct {

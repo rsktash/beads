@@ -68,38 +68,6 @@ func (q *Queries) AddDependency(ctx context.Context, arg AddDependencyParams) er
 	return err
 }
 
-const addEvent = `-- name: AddEvent :exec
-INSERT INTO events (id, issue_id, event_type, actor, old_value, new_value, comment, created_at)
-VALUES ($1, $2, $3,
-        $4, $5, $6,
-        $7, $8)
-`
-
-type AddEventParams struct {
-	ID        string    `json:"id"`
-	IssueID   string    `json:"issue_id"`
-	EventType string    `json:"event_type"`
-	Actor     string    `json:"actor"`
-	OldValue  string    `json:"old_value"`
-	NewValue  string    `json:"new_value"`
-	Comment   string    `json:"comment"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-func (q *Queries) AddEvent(ctx context.Context, arg AddEventParams) error {
-	_, err := q.db.ExecContext(ctx, addEvent,
-		arg.ID,
-		arg.IssueID,
-		arg.EventType,
-		arg.Actor,
-		arg.OldValue,
-		arg.NewValue,
-		arg.Comment,
-		arg.CreatedAt,
-	)
-	return err
-}
-
 const addLabel = `-- name: AddLabel :exec
 INSERT INTO labels (issue_id, label) VALUES ($1, $2)
 `
@@ -124,7 +92,6 @@ type BlocksReachableFromParams struct {
 	Type    string `json:"type"`
 }
 
-// Forward step in the cycle-detection BFS: who does `issue_id` block?
 func (q *Queries) BlocksReachableFrom(ctx context.Context, arg BlocksReachableFromParams) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, blocksReachableFrom, arg.IssueID, arg.Type)
 	if err != nil {
@@ -148,14 +115,14 @@ func (q *Queries) BlocksReachableFrom(ctx context.Context, arg BlocksReachableFr
 	return items, nil
 }
 
-const childCount = `-- name: ChildCount :one
-SELECT COUNT(*) FROM dependencies
-WHERE depends_on_id = $1 AND type = 'parent-child'
+const countIssuesWithPrefix = `-- name: CountIssuesWithPrefix :one
+SELECT COUNT(*) FROM issues
+WHERE id LIKE $1
 `
 
-// count of issues that have a parent-child dep pointing AT them from this parent
-func (q *Queries) ChildCount(ctx context.Context, parentID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, childCount, parentID)
+// Used by the adaptive id-length selector: more issues -> longer hash.
+func (q *Queries) CountIssuesWithPrefix(ctx context.Context, likePattern string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countIssuesWithPrefix, likePattern)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -166,11 +133,12 @@ const createIssue = `-- name: CreateIssue :exec
 INSERT INTO issues (
     id, content_hash, title, description, design, acceptance_criteria, notes,
     status, priority, issue_type, assignee, estimated_minutes,
-    created_at, created_by, owner, updated_at, closed_at, closed_by_session,
+    created_at, created_by, owner, updated_at, started_at, closed_at, closed_by_session,
     external_ref, spec_id, metadata, source_repo, source_system, close_reason,
-    sender, ephemeral, pinned, is_template, wisp_type, mol_type, role_type,
+    sender, ephemeral, pinned, is_template,
+    wisp_type, mol_type, role_type,
     event_kind, actor, target, payload,
-    started_at, due_at, defer_until
+    due_at, defer_until
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
@@ -179,14 +147,15 @@ INSERT INTO issues (
     $11, $12,
     $13, $14, $15,
     $16, $17, $18,
-    $19, $20, $21,
-    $22, $23, $24,
-    $25, $26, $27,
-    $28, $29, $30,
-    $31,
-    $32, $33, $34,
-    $35,
-    $36, $37, $38
+    $19,
+    $20, $21, $22,
+    $23, $24, $25,
+    $26, $27, $28,
+    $29,
+    $30, $31, $32,
+    $33, $34, $35,
+    $36,
+    $37, $38
 )
 `
 
@@ -207,6 +176,7 @@ type CreateIssueParams struct {
 	CreatedBy          string       `json:"created_by"`
 	Owner              string       `json:"owner"`
 	UpdatedAt          time.Time    `json:"updated_at"`
+	StartedAt          sql.NullTime `json:"started_at"`
 	ClosedAt           sql.NullTime `json:"closed_at"`
 	ClosedBySession    string       `json:"closed_by_session"`
 	ExternalRef        string       `json:"external_ref"`
@@ -226,13 +196,13 @@ type CreateIssueParams struct {
 	Actor              string       `json:"actor"`
 	Target             string       `json:"target"`
 	Payload            string       `json:"payload"`
-	StartedAt          sql.NullTime `json:"started_at"`
 	DueAt              sql.NullTime `json:"due_at"`
 	DeferUntil         sql.NullTime `json:"defer_until"`
 }
 
-// Dialect-portable: positional placeholders are introduced via sqlc.arg() so
-// both `?` (sqlite) and `$N` (postgres) backends generate clean code.
+// Dialect-portable queries: named args via sqlc.arg() so both `?` (sqlite)
+// and `$N` (postgres) backends generate clean code. Keep this file ASCII
+// only and avoid apostrophes in comments (sqlc parser is fragile here).
 func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error {
 	_, err := q.db.ExecContext(ctx, createIssue,
 		arg.ID,
@@ -251,6 +221,7 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error 
 		arg.CreatedBy,
 		arg.Owner,
 		arg.UpdatedAt,
+		arg.StartedAt,
 		arg.ClosedAt,
 		arg.ClosedBySession,
 		arg.ExternalRef,
@@ -270,7 +241,6 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error 
 		arg.Actor,
 		arg.Target,
 		arg.Payload,
-		arg.StartedAt,
 		arg.DueAt,
 		arg.DeferUntil,
 	)
@@ -289,8 +259,19 @@ func (q *Queries) DeleteIssue(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const getConfigValue = `-- name: GetConfigValue :one
+SELECT value FROM config WHERE key = $1
+`
+
+func (q *Queries) GetConfigValue(ctx context.Context, key string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getConfigValue, key)
+	var value string
+	err := row.Scan(&value)
+	return value, err
+}
+
 const getIssue = `-- name: GetIssue :one
-SELECT id, content_hash, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, created_by, owner, updated_at, closed_at, closed_by_session, external_ref, spec_id, metadata, source_repo, source_system, close_reason, sender, ephemeral, pinned, is_template, wisp_type, mol_type, role_type, event_kind, actor, target, payload, started_at, due_at, defer_until FROM issues WHERE id = $1
+SELECT id, content_hash, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, created_by, owner, updated_at, started_at, closed_at, closed_by_session, external_ref, spec_id, metadata, source_repo, source_system, close_reason, sender, ephemeral, pinned, is_template, wisp_type, mol_type, role_type, event_kind, actor, target, payload, due_at, defer_until FROM issues WHERE id = $1
 `
 
 func (q *Queries) GetIssue(ctx context.Context, id string) (Issue, error) {
@@ -313,6 +294,7 @@ func (q *Queries) GetIssue(ctx context.Context, id string) (Issue, error) {
 		&i.CreatedBy,
 		&i.Owner,
 		&i.UpdatedAt,
+		&i.StartedAt,
 		&i.ClosedAt,
 		&i.ClosedBySession,
 		&i.ExternalRef,
@@ -332,7 +314,6 @@ func (q *Queries) GetIssue(ctx context.Context, id string) (Issue, error) {
 		&i.Actor,
 		&i.Target,
 		&i.Payload,
-		&i.StartedAt,
 		&i.DueAt,
 		&i.DeferUntil,
 	)
@@ -359,6 +340,33 @@ func (q *Queries) ListComments(ctx context.Context, issueID string) ([]Comment, 
 			&i.Text,
 			&i.CreatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConfig = `-- name: ListConfig :many
+SELECT key, value FROM config ORDER BY key
+`
+
+func (q *Queries) ListConfig(ctx context.Context) ([]Config, error) {
+	rows, err := q.db.QueryContext(ctx, listConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Config
+	for rows.Next() {
+		var i Config
+		if err := rows.Scan(&i.Key, &i.Value); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -409,42 +417,6 @@ func (q *Queries) ListDependenciesTouching(ctx context.Context, id string) ([]De
 	return items, nil
 }
 
-const listEvents = `-- name: ListEvents :many
-SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM events WHERE issue_id = $1 ORDER BY created_at
-`
-
-func (q *Queries) ListEvents(ctx context.Context, issueID string) ([]Event, error) {
-	rows, err := q.db.QueryContext(ctx, listEvents, issueID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Event
-	for rows.Next() {
-		var i Event
-		if err := rows.Scan(
-			&i.ID,
-			&i.IssueID,
-			&i.EventType,
-			&i.Actor,
-			&i.OldValue,
-			&i.NewValue,
-			&i.Comment,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listLabels = `-- name: ListLabels :many
 SELECT label FROM labels WHERE issue_id = $1 ORDER BY label
 `
@@ -479,9 +451,6 @@ ON CONFLICT(parent_id) DO UPDATE SET last_child = child_counters.last_child + 1
 RETURNING last_child
 `
 
-// Atomically increment the per-parent counter and return the new value. The
-// ON CONFLICT ... DO UPDATE ... RETURNING form works on both SQLite (>=3.35)
-// and Postgres, which is what the project targets.
 func (q *Queries) NextChildIndex(ctx context.Context, parentID string) (int32, error) {
 	row := q.db.QueryRowContext(ctx, nextChildIndex, parentID)
 	var last_child int32
@@ -489,8 +458,22 @@ func (q *Queries) NextChildIndex(ctx context.Context, parentID string) (int32, e
 	return last_child, err
 }
 
+const nextCounterID = `-- name: NextCounterID :one
+INSERT INTO issue_counter (prefix, last_id)
+VALUES ($1, 1)
+ON CONFLICT(prefix) DO UPDATE SET last_id = issue_counter.last_id + 1
+RETURNING last_id
+`
+
+func (q *Queries) NextCounterID(ctx context.Context, prefix string) (int32, error) {
+	row := q.db.QueryRowContext(ctx, nextCounterID, prefix)
+	var last_id int32
+	err := row.Scan(&last_id)
+	return last_id, err
+}
+
 const readyAt = `-- name: ReadyAt :many
-SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes, i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes, i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.closed_by_session, i.external_ref, i.spec_id, i.metadata, i.source_repo, i.source_system, i.close_reason, i.sender, i.ephemeral, i.pinned, i.is_template, i.wisp_type, i.mol_type, i.role_type, i.event_kind, i.actor, i.target, i.payload, i.started_at, i.due_at, i.defer_until FROM issues i
+SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes, i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes, i.created_at, i.created_by, i.owner, i.updated_at, i.started_at, i.closed_at, i.closed_by_session, i.external_ref, i.spec_id, i.metadata, i.source_repo, i.source_system, i.close_reason, i.sender, i.ephemeral, i.pinned, i.is_template, i.wisp_type, i.mol_type, i.role_type, i.event_kind, i.actor, i.target, i.payload, i.due_at, i.defer_until FROM issues i
 WHERE i.status = 'open'
   AND i.ephemeral = 0
   AND i.is_template = 0
@@ -505,8 +488,6 @@ WHERE i.status = 'open'
 ORDER BY i.priority ASC, i.created_at ASC
 `
 
-// Open, non-ephemeral, non-template, no `blocks` dep from a non-{closed,pinned}
-// issue, not deferred. `now` is supplied by the caller for portability.
 func (q *Queries) ReadyAt(ctx context.Context, now sql.NullTime) ([]Issue, error) {
 	rows, err := q.db.QueryContext(ctx, readyAt, now)
 	if err != nil {
@@ -533,6 +514,7 @@ func (q *Queries) ReadyAt(ctx context.Context, now sql.NullTime) ([]Issue, error
 			&i.CreatedBy,
 			&i.Owner,
 			&i.UpdatedAt,
+			&i.StartedAt,
 			&i.ClosedAt,
 			&i.ClosedBySession,
 			&i.ExternalRef,
@@ -552,7 +534,6 @@ func (q *Queries) ReadyAt(ctx context.Context, now sql.NullTime) ([]Issue, error
 			&i.Actor,
 			&i.Target,
 			&i.Payload,
-			&i.StartedAt,
 			&i.DueAt,
 			&i.DeferUntil,
 		); err != nil {
@@ -602,4 +583,22 @@ func (q *Queries) RemoveLabel(ctx context.Context, arg RemoveLabelParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setConfigValue = `-- name: SetConfigValue :exec
+INSERT INTO config (key, value) VALUES ($1, $2)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`
+
+type SetConfigValueParams struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// Use `excluded.value` (the standard ON CONFLICT pseudo-row) to avoid binding
+// the value parameter twice. sqlc named-arg expansion mangles repeated args
+// in INSERT...ON CONFLICT...DO UPDATE statements.
+func (q *Queries) SetConfigValue(ctx context.Context, arg SetConfigValueParams) error {
+	_, err := q.db.ExecContext(ctx, setConfigValue, arg.Key, arg.Value)
+	return err
 }

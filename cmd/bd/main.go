@@ -46,9 +46,9 @@ func newRoot() *cobra.Command {
 		newDeleteCmd(),
 		newLabelCmd(),
 		newCommentCmd(),
-		newHistoryCmd(),
 		newBatchCmd(),
 		newEditCmd(),
+		newConfigCmd(),
 		newMigrateCmd(),
 	)
 	return root
@@ -71,7 +71,7 @@ func openStore(cmd *cobra.Command) (*cmdCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.OpenWithPrefix(cmd.Context(), cfg.DSN, cfg.Prefix)
+	st, err := store.Open(cmd.Context(), cfg.DSN)
 	if err != nil {
 		return nil, err
 	}

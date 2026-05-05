@@ -1,10 +1,13 @@
-// Package config resolves where the beads database lives and which prefix the
-// project's IDs use.
+// Package config resolves where the beads database lives. It is intentionally
+// minimal: the on-disk file holds only what's needed before the DB is open
+// (the DSN). Everything else (prefix, id mode, custom statuses/types) lives
+// in the DB's `config` table so all clients of the same DB see the same
+// project settings.
 //
-// Resolution order:
-//  1. --db / BEADS_DB explicit DSN
-//  2. .beads/config (key=value) in cwd or ancestor
-//  3. .beads/beads.db default in cwd
+// Resolution order for the DSN:
+//  1. --db / $BD_DB explicit DSN
+//  2. db= line in .bd/config (walked up from cwd, or $BD_DIR override)
+//  3. default: .bd/bd.db (sqlite)
 package config
 
 import (
@@ -17,27 +20,29 @@ import (
 )
 
 const (
-	dirName       = ".beads"
-	configName    = "config"
-	defaultName   = "beads.db"
-	DefaultPrefix = "bd"
-	EnvDSN        = "BEADS_DB"
-	EnvDir        = "BEADS_DIR"
-	EnvPrefix     = "BEADS_PREFIX"
+	dirName     = ".bd"
+	configName  = "config"
+	defaultName = "bd.db"
+	EnvDSN      = "BD_DB"
+	EnvDir      = "BD_DIR"
+	// EnvPrefix is read by `bd init --prefix` only — outside init, the
+	// prefix is read from the DB's `config` table.
+	EnvPrefix = "BD_PREFIX"
 )
 
 type Config struct {
-	DSN     string
-	BeadDir string
-	Prefix  string
+	DSN     string // resolved DB connection string
+	BeadDir string // .bd directory path (may be empty if unresolved)
 }
 
+// Resolve returns the connection config for the active project. It does NOT
+// read any project-level settings (prefix, id mode, etc.); those live in the
+// DB and are resolved by the store layer after Open().
 func Resolve(explicitDSN string) (*Config, error) {
-	cfg := &Config{Prefix: DefaultPrefix}
+	cfg := &Config{}
 	if explicitDSN != "" {
 		cfg.DSN = explicitDSN
-	}
-	if env := os.Getenv(EnvDSN); env != "" && cfg.DSN == "" {
+	} else if env := os.Getenv(EnvDSN); env != "" {
 		cfg.DSN = env
 	}
 
@@ -47,17 +52,17 @@ func Resolve(explicitDSN string) (*Config, error) {
 	}
 	if found {
 		cfg.BeadDir = dir
-		if err := readConfig(dir, cfg); err != nil {
-			return nil, err
+		if cfg.DSN == "" {
+			dsn, err := readDSNFromFile(dir)
+			if err != nil {
+				return nil, err
+			}
+			cfg.DSN = dsn
 		}
-	}
-
-	if env := os.Getenv(EnvPrefix); env != "" {
-		cfg.Prefix = env
 	}
 	if cfg.DSN == "" {
 		if !found {
-			return nil, errors.New("no .beads directory found — run `bd init` first")
+			return nil, errors.New("no .bd directory found — run `bd init` first")
 		}
 		cfg.DSN = filepath.Join(dir, defaultName)
 	}
@@ -87,16 +92,14 @@ func findBeadsDir() (string, bool, error) {
 	return "", false, nil
 }
 
-// readConfig parses .beads/config and overrides cfg fields. Missing file is
-// not an error.
-func readConfig(beadsDir string, cfg *Config) error {
+func readDSNFromFile(beadsDir string) (string, error) {
 	p := filepath.Join(beadsDir, configName)
 	f, err := os.Open(p)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return "", nil
 		}
-		return err
+		return "", err
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -109,73 +112,18 @@ func readConfig(beadsDir string, cfg *Config) error {
 		if !ok {
 			continue
 		}
-		switch strings.TrimSpace(k) {
-		case "db":
-			if cfg.DSN == "" {
-				cfg.DSN = strings.TrimSpace(v)
-			}
-		case "prefix":
-			cfg.Prefix = strings.TrimSpace(v)
+		if strings.TrimSpace(k) == "db" {
+			return strings.TrimSpace(v), nil
 		}
 	}
-	return sc.Err()
+	return "", sc.Err()
 }
 
-// PrefixFromDSN extracts a sensible default prefix from a DSN. For
-// `postgres://user@host/dbname` or `mysql ... /dbname` it returns the
-// database name; for a sqlite path it returns the filename without
-// extension; falls back to DefaultPrefix.
-func PrefixFromDSN(dsn string) string {
-	switch {
-	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
-		// postgres://user:pw@host:port/dbname?...
-		rest := dsn
-		if i := strings.Index(rest, "://"); i >= 0 {
-			rest = rest[i+3:]
-		}
-		if slash := strings.Index(rest, "/"); slash >= 0 {
-			rest = rest[slash+1:]
-			if q := strings.Index(rest, "?"); q >= 0 {
-				rest = rest[:q]
-			}
-			if rest != "" {
-				return rest
-			}
-		}
-	case strings.Contains(dsn, "tcp(") && strings.Contains(dsn, ")/"):
-		// MySQL DSN: user[:pw]@tcp(host:port)/dbname?...
-		i := strings.Index(dsn, ")/")
-		if i >= 0 {
-			rest := dsn[i+2:]
-			if q := strings.Index(rest, "?"); q >= 0 {
-				rest = rest[:q]
-			}
-			if rest != "" {
-				return rest
-			}
-		}
-	}
-	// sqlite or unknown: filename minus extension
-	base := dsn
-	if i := strings.LastIndexAny(base, "/\\"); i >= 0 {
-		base = base[i+1:]
-	}
-	for _, ext := range []string{".db", ".sqlite", ".sqlite3"} {
-		if strings.HasSuffix(base, ext) {
-			base = strings.TrimSuffix(base, ext)
-			break
-		}
-	}
-	if base == "" || base == "beads" {
-		return DefaultPrefix
-	}
-	return base
-}
-
-// Init creates a .beads dir at cwd with default config. dsn may be ""
-// (default sqlite path), "sqlite:..." or "postgres://...". If prefix is
-// empty, it's auto-derived from dsn via PrefixFromDSN.
-func Init(dsn, prefix string) (*Config, error) {
+// Init creates a .bd directory and writes the DSN to .bd/config.
+// It does NOT seed the in-DB config table — that's done by the store layer
+// once it has an open connection (because we need to be able to point
+// `bd init` at remote DBs that may already have a config table populated).
+func Init(dsn string) (*Config, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -187,13 +135,10 @@ func Init(dsn, prefix string) (*Config, error) {
 	if dsn == "" {
 		dsn = filepath.Join(dir, defaultName)
 	}
-	if prefix == "" {
-		prefix = PrefixFromDSN(dsn)
-	}
 	cfgPath := filepath.Join(dir, configName)
-	body := fmt.Sprintf("# beads config\ndb=%s\nprefix=%s\n", dsn, prefix)
+	body := fmt.Sprintf("# bd config — only the DSN lives here.\n# Project settings (prefix, id mode, custom statuses) live in the DB `config` table.\ndb=%s\n", dsn)
 	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
 		return nil, err
 	}
-	return &Config{DSN: dsn, BeadDir: dir, Prefix: prefix}, nil
+	return &Config{DSN: dsn, BeadDir: dir}, nil
 }

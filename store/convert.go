@@ -122,13 +122,14 @@ func scanIssue(r rowScanner) (*beads.Issue, error) {
 		&f.ID, &f.ContentHash, &f.Title, &f.Description, &f.Design,
 		&f.AcceptanceCriteria, &f.Notes,
 		&f.Status, &priority, &f.Type, &f.Assignee, &estimatedMinutes,
-		&f.CreatedAt, &f.CreatedBy, &f.Owner, &f.UpdatedAt, &f.ClosedAt,
-		&f.ClosedBySession, &f.ExternalRef, &f.SpecID, &f.Metadata,
+		&f.CreatedAt, &f.CreatedBy, &f.Owner, &f.UpdatedAt,
+		&f.StartedAt, &f.ClosedAt, &f.ClosedBySession,
+		&f.ExternalRef, &f.SpecID, &f.Metadata,
 		&f.SourceRepo, &f.SourceSystem, &f.CloseReason,
 		&f.Sender, &ephemeral, &pinned, &isTemplate,
 		&f.WispType, &f.MolType, &f.RoleType,
 		&f.EventKind, &f.Actor, &f.Target, &f.Payload,
-		&f.StartedAt, &f.DueAt, &f.DeferUntil,
+		&f.DueAt, &f.DeferUntil,
 	); err != nil {
 		return nil, err
 	}

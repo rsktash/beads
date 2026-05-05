@@ -12,30 +12,30 @@ import (
 type Querier interface {
 	AddComment(ctx context.Context, arg AddCommentParams) error
 	AddDependency(ctx context.Context, arg AddDependencyParams) error
-	AddEvent(ctx context.Context, arg AddEventParams) error
 	AddLabel(ctx context.Context, arg AddLabelParams) error
-	// Forward step in the cycle-detection BFS: who does `issue_id` block?
 	BlocksReachableFrom(ctx context.Context, arg BlocksReachableFromParams) ([]string, error)
-	// count of issues that have a parent-child dep pointing AT them from this parent
-	ChildCount(ctx context.Context, parentID string) (int64, error)
-	// Dialect-portable: positional placeholders are introduced via sqlc.arg() so
-	// both `?` (sqlite) and `$N` (postgres) backends generate clean code.
+	// Used by the adaptive id-length selector: more issues -> longer hash.
+	CountIssuesWithPrefix(ctx context.Context, likePattern string) (int64, error)
+	// Dialect-portable queries: named args via sqlc.arg() so both `?` (sqlite)
+	// and `$N` (postgres) backends generate clean code. Keep this file ASCII
+	// only and avoid apostrophes in comments (sqlc parser is fragile here).
 	CreateIssue(ctx context.Context, arg CreateIssueParams) error
 	DeleteIssue(ctx context.Context, id string) (int64, error)
+	GetConfigValue(ctx context.Context, key string) (string, error)
 	GetIssue(ctx context.Context, id string) (Issue, error)
 	ListComments(ctx context.Context, issueID string) ([]Comment, error)
+	ListConfig(ctx context.Context) ([]Config, error)
 	ListDependenciesTouching(ctx context.Context, id string) ([]Dependency, error)
-	ListEvents(ctx context.Context, issueID string) ([]Event, error)
 	ListLabels(ctx context.Context, issueID string) ([]string, error)
-	// Atomically increment the per-parent counter and return the new value. The
-	// ON CONFLICT ... DO UPDATE ... RETURNING form works on both SQLite (>=3.35)
-	// and Postgres, which is what the project targets.
 	NextChildIndex(ctx context.Context, parentID string) (int32, error)
-	// Open, non-ephemeral, non-template, no `blocks` dep from a non-{closed,pinned}
-	// issue, not deferred. `now` is supplied by the caller for portability.
+	NextCounterID(ctx context.Context, prefix string) (int32, error)
 	ReadyAt(ctx context.Context, now sql.NullTime) ([]Issue, error)
 	RemoveDependency(ctx context.Context, arg RemoveDependencyParams) (int64, error)
 	RemoveLabel(ctx context.Context, arg RemoveLabelParams) (int64, error)
+	// Use `excluded.value` (the standard ON CONFLICT pseudo-row) to avoid binding
+	// the value parameter twice. sqlc named-arg expansion mangles repeated args
+	// in INSERT...ON CONFLICT...DO UPDATE statements.
+	SetConfigValue(ctx context.Context, arg SetConfigValueParams) error
 }
 
 var _ Querier = (*Queries)(nil)

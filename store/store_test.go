@@ -12,10 +12,19 @@ import (
 
 func newSqliteStore(t *testing.T) *store.Store {
 	t.Helper()
+	return newSqliteStoreWithPrefix(t, "bd")
+}
+
+func newSqliteStoreWithPrefix(t *testing.T, prefix string) *store.Store {
+	t.Helper()
+	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "test.db")
-	st, err := store.Open(context.Background(), dsn)
+	st, err := store.Open(ctx, dsn)
 	if err != nil {
 		t.Fatalf("open: %v", err)
+	}
+	if err := st.SetConfig(ctx, store.CfgIssuePrefix, prefix); err != nil {
+		t.Fatalf("set prefix: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st
@@ -198,12 +207,7 @@ func TestUpdateAndFilters(t *testing.T) {
 
 func TestPrefixAndIDFormat(t *testing.T) {
 	ctx := context.Background()
-	dsn := filepath.Join(t.TempDir(), "yuklar.db")
-	st, err := store.OpenWithPrefix(ctx, dsn, "yuklar")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
+	st := newSqliteStoreWithPrefix(t, "yuklar")
 
 	i := &beads.Issue{Title: "first", Type: beads.TypeTask, Status: beads.StatusOpen, Priority: 1}
 	if err := st.CreateIssue(ctx, i); err != nil {
@@ -222,14 +226,49 @@ func TestPrefixAndIDFormat(t *testing.T) {
 		}
 	}
 
-	// Same content + different nonce ⇒ no collision: create a second issue with
-	// the same title, distinct id.
+	// Two issues with identical content but different timestamps must get
+	// different ids (timestamp is part of the seed).
+	time.Sleep(2 * time.Millisecond)
 	j := &beads.Issue{Title: "first", Type: beads.TypeTask, Status: beads.StatusOpen, Priority: 1}
 	if err := st.CreateIssue(ctx, j); err != nil {
 		t.Fatal(err)
 	}
 	if i.ID == j.ID {
-		t.Fatalf("collision retry failed: both got %s", i.ID)
+		t.Fatalf("expected distinct ids for distinct timestamps: both got %s", i.ID)
+	}
+}
+
+func TestNoPrefixError(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "test.db")
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	i := &beads.Issue{Title: "x", Type: beads.TypeTask, Status: beads.StatusOpen}
+	err = st.CreateIssue(ctx, i)
+	if err == nil {
+		t.Fatal("expected ErrNoPrefix when issue_prefix unset")
+	}
+}
+
+func TestCounterMode(t *testing.T) {
+	ctx := context.Background()
+	st := newSqliteStoreWithPrefix(t, "yk")
+	if err := st.SetConfig(ctx, store.CfgIssueIDMode, store.IDModeCounter); err != nil {
+		t.Fatal(err)
+	}
+	a := &beads.Issue{Title: "one", Type: beads.TypeTask, Status: beads.StatusOpen}
+	b := &beads.Issue{Title: "two", Type: beads.TypeTask, Status: beads.StatusOpen}
+	if err := st.CreateIssue(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateIssue(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if a.ID != "yk-1" || b.ID != "yk-2" {
+		t.Fatalf("counter ids wrong: a=%s b=%s", a.ID, b.ID)
 	}
 }
 
@@ -256,11 +295,13 @@ func TestNextChildIDAtomic(t *testing.T) {
 
 func startsWith(s, p string) bool { return len(s) >= len(p) && s[:len(p)] == p }
 
-func TestCheckConstraints(t *testing.T) {
+func TestPriorityCheckConstraint(t *testing.T) {
 	st := newSqliteStore(t)
 	ctx := context.Background()
-	bad := &beads.Issue{Title: "x", Type: "not-a-real-type", Status: beads.StatusOpen}
+	// Custom statuses/types are user-configurable so we no longer CHECK them
+	// at the DB level. Priority is still range-checked (0..4).
+	bad := &beads.Issue{Title: "x", Type: beads.TypeTask, Status: beads.StatusOpen, Priority: 99}
 	if err := st.CreateIssue(ctx, bad); err == nil {
-		t.Fatal("expected DB CHECK to reject invalid issue_type")
+		t.Fatal("expected priority CHECK to reject 99")
 	}
 }

@@ -36,17 +36,12 @@ func newShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			events, err := cc.store.ListEvents(cc.ctx, id)
-			if err != nil {
-				return err
-			}
 			if cc.json {
 				return writeJSON(struct {
 					Issue        any `json:"issue"`
 					Dependencies any `json:"dependencies"`
 					Comments     any `json:"comments"`
-					Events       any `json:"events"`
-				}{i, deps, comments, events})
+				}{i, deps, comments})
 			}
 			fmt.Printf("%s  [%s] %s p%d %s\n", i.ID, i.Status, i.Type, i.Priority, i.Title)
 			if i.Assignee != "" {

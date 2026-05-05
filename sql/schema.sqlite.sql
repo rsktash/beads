@@ -1,7 +1,6 @@
--- Tier-1 schema: faithful core of upstream beads (gastownhall/beads).
--- Polymorphic `issues` row stores every bead type, discriminated by issue_type
--- + supporting columns. Type-specific subsystems (await/hook/agent/compaction)
--- are out of scope for v0.1 and their columns are omitted.
+-- bd v0.2 schema for SQLite. Faithful core of upstream beads
+-- (gastownhall/beads), stripped of versioning/history (Dolt's job) and AI
+-- memory-decay/agent-coordination columns.
 
 CREATE TABLE issues (
     id                  TEXT PRIMARY KEY,
@@ -11,27 +10,29 @@ CREATE TABLE issues (
     design              TEXT NOT NULL DEFAULT '',
     acceptance_criteria TEXT NOT NULL DEFAULT '',
     notes               TEXT NOT NULL DEFAULT '',
-    status              TEXT NOT NULL DEFAULT 'open'
-        CHECK (status IN ('open','in_progress','blocked','closed','pinned')),
-    priority            INTEGER NOT NULL DEFAULT 2
-        CHECK (priority BETWEEN 0 AND 4),
-    issue_type          TEXT NOT NULL DEFAULT 'task'
-        CHECK (issue_type IN ('task','bug','epic','feature','message','wisp','molecule','role','event')),
+
+    status              TEXT NOT NULL DEFAULT 'open',
+    priority            INTEGER NOT NULL DEFAULT 2 CHECK (priority BETWEEN 0 AND 4),
+    issue_type          TEXT NOT NULL DEFAULT 'task',
     assignee            TEXT NOT NULL DEFAULT '',
     estimated_minutes   INTEGER NOT NULL DEFAULT 0,
+
     created_at          TIMESTAMP NOT NULL,
     created_by          TEXT NOT NULL DEFAULT '',
     owner               TEXT NOT NULL DEFAULT '',
     updated_at          TIMESTAMP NOT NULL,
+    started_at          TIMESTAMP,
     closed_at           TIMESTAMP,
     closed_by_session   TEXT NOT NULL DEFAULT '',
+
     external_ref        TEXT NOT NULL DEFAULT '',
     spec_id             TEXT NOT NULL DEFAULT '',
     metadata            TEXT NOT NULL DEFAULT '{}',
     source_repo         TEXT NOT NULL DEFAULT '',
     source_system       TEXT NOT NULL DEFAULT '',
     close_reason        TEXT NOT NULL DEFAULT '',
-    -- discriminator / type-specific (data-only; behaviour TBD):
+
+    -- type discriminator columns (data only):
     sender              TEXT NOT NULL DEFAULT '',
     ephemeral           INTEGER NOT NULL DEFAULT 0,
     pinned              INTEGER NOT NULL DEFAULT 0,
@@ -43,19 +44,16 @@ CREATE TABLE issues (
     actor               TEXT NOT NULL DEFAULT '',
     target              TEXT NOT NULL DEFAULT '',
     payload             TEXT NOT NULL DEFAULT '',
-    -- scheduling:
-    started_at          TIMESTAMP,
+
     due_at              TIMESTAMP,
     defer_until         TIMESTAMP
 );
-
 CREATE INDEX idx_issues_status     ON issues(status);
 CREATE INDEX idx_issues_priority   ON issues(priority);
 CREATE INDEX idx_issues_issue_type ON issues(issue_type);
 CREATE INDEX idx_issues_assignee   ON issues(assignee);
 CREATE INDEX idx_issues_created_at ON issues(created_at);
 
--- Upstream PK: (issue_id, depends_on_id). One pair = one type.
 CREATE TABLE dependencies (
     issue_id      TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     depends_on_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
@@ -88,23 +86,21 @@ CREATE TABLE comments (
 CREATE INDEX idx_comments_issue      ON comments(issue_id);
 CREATE INDEX idx_comments_created_at ON comments(created_at);
 
-CREATE TABLE events (
-    id         TEXT PRIMARY KEY,
-    issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    event_type TEXT NOT NULL,
-    actor      TEXT NOT NULL,
-    old_value  TEXT NOT NULL DEFAULT '',
-    new_value  TEXT NOT NULL DEFAULT '',
-    comment    TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMP NOT NULL
+-- Project-level settings stored alongside the data so all clients see the
+-- same prefix, id mode, custom statuses, etc.
+CREATE TABLE config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX idx_events_issue      ON events(issue_id);
-CREATE INDEX idx_events_created_at ON events(created_at);
 
--- Per-parent atomic counter for hierarchical ids ("bd-a3f8.1", "bd-a3f8.2", …).
--- Upsert with `INSERT … ON CONFLICT DO UPDATE … RETURNING last_child` so
--- concurrent allocations stay correct.
+-- Per-parent atomic counter for hierarchical ids ("yuklar-a3f8.1", ".2", ...).
 CREATE TABLE child_counters (
     parent_id  TEXT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
     last_child INTEGER NOT NULL DEFAULT 0
+);
+
+-- Per-prefix sequential counter when issue_id_mode=counter (e.g. "bd-1, bd-2").
+CREATE TABLE issue_counter (
+    prefix  TEXT PRIMARY KEY,
+    last_id INTEGER NOT NULL DEFAULT 0
 );
