@@ -27,10 +27,19 @@ export function issuesRouter() {
   // serialized response and replies 304 with an empty body when the
   // client's If-None-Match header matches — saves bandwidth and the
   // client-side parse/render. Skipped for mutations.
+  //
+  // Cache-Control "private, no-cache" tells the browser to keep the body
+  // in the per-origin disk cache and always revalidate via If-None-Match.
+  // Without this header the browser may not cache JSON responses at all,
+  // which would mean ETag is set but never sent back — neutering the 304
+  // path. "private" prevents shared caches from storing the data.
   const etagMiddleware = etag();
   r.use('/*', async (c, next) => {
     if (c.req.method !== 'GET') return next();
-    return etagMiddleware(c, next);
+    await etagMiddleware(c, next);
+    if (c.res.status === 200 || c.res.status === 304) {
+      c.res.headers.set('Cache-Control', 'private, no-cache');
+    }
   });
 
   r.get('/', async (c) => {
