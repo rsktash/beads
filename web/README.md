@@ -36,6 +36,23 @@ npm run dev   # vite at 5173 + hono at 3333; vite proxies /api -> hono
 `npm run build` writes to `web/dist/`. `npm start` runs the Hono server, which
 serves both `/api/*` and the built client at `/`.
 
+## Releases
+
+Tag `v*` to publish:
+
+```sh
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+That triggers two GitHub Actions:
+
+- `.github/workflows/publish.yml` — `npm publish --provenance --access public`
+  for `@rsktash/bd-web`. Required repo secret: `NPM_TOKEN`.
+- `.github/workflows/docker.yml` — pushes `ghcr.io/rsktash/bd-web:{version}`,
+  `:{major}.{minor}`, and `:latest`. Uses the built-in `GITHUB_TOKEN`.
+
+Bump `web/package.json` before tagging.
+
 ## Routes
 
 - `/` — board (kanban by status; ready issues at top)
