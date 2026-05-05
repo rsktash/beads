@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { api } from "../lib/api";
 import { PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
+import { CopyId } from "../components/CopyId";
 import { getAvatarColor, getInitials } from "../lib/avatar";
 
 const STATUS_OPTS = ["", "open", "in_progress", "blocked", "closed", "pinned"];
@@ -172,14 +173,17 @@ function ListComponent() {
                   style={{ borderTop: "1px solid var(--color-border-subtle)" }}
                 >
                   <Td>
-                    <Link
-                      to="/issue/$id"
-                      params={{ id: i.id }}
-                      className="font-mono text-xs"
-                      style={{ color: "var(--color-ink-tertiary)" }}
-                    >
-                      {i.id}
-                    </Link>
+                    <span className="inline-flex items-center gap-2">
+                      <Link
+                        to="/issue/$id"
+                        params={{ id: i.id }}
+                        className="font-mono text-xs"
+                        style={{ color: "var(--color-ink-secondary)" }}
+                      >
+                        {i.id}
+                      </Link>
+                      <CopyId id={i.id} className="text-xs" />
+                    </span>
                   </Td>
                   <Td><StatusBadge status={i.status} /></Td>
                   <Td><PriorityBadge priority={i.priority} /></Td>

@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import type { Issue } from "../lib/types";
 import { PriorityBadge, TypeBadge, typeBorderColor } from "./badges";
+import { CopyId } from "./CopyId";
 import { getAvatarColor, getInitials } from "../lib/avatar";
 
 // IssueCard mirrors upstream beads-ui:
@@ -38,9 +39,7 @@ export function IssueCard({
               {issue.parent_id} ›
             </span>
           )}
-          <span className="text-xs font-mono" style={{ color: "var(--color-ink-tertiary)" }}>
-            {issue.id}
-          </span>
+          <CopyId id={issue.id} className="text-xs" />
         </div>
 
         {/* title */}
