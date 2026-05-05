@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/rustamsmax/beads/internal/config"
-	"github.com/rustamsmax/beads/internal/storage"
+	"github.com/rsktash/beads/internal/config"
+	"github.com/rsktash/beads/store"
 )
 
 func newInitCmd() *cobra.Command {
@@ -20,7 +20,7 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, err := storage.Open(context.Background(), cfg.DSN)
+			st, err := store.Open(context.Background(), cfg.DSN)
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}

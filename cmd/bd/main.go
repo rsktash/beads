@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/rustamsmax/beads/internal/config"
-	"github.com/rustamsmax/beads/internal/storage"
+	"github.com/rsktash/beads/internal/config"
+	"github.com/rsktash/beads/store"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 
 type cmdCtx struct {
 	ctx   context.Context
-	store *storage.Store
+	store *store.Store
 	json  bool
 }
 
@@ -31,7 +31,7 @@ func newRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVar(&flagDB, "db", "", "DSN (sqlite path or postgres://...). Defaults to .beads/beads.db or $BEADS_DB.")
+	root.PersistentFlags().StringVar(&flagDB, "db", "", "DSN (sqlite path or postgres://...). Default: .beads/beads.db or $BEADS_DB.")
 	root.PersistentFlags().BoolVarP(&flagJSON, "json", "j", false, "JSON output")
 
 	root.AddCommand(
@@ -44,6 +44,10 @@ func newRoot() *cobra.Command {
 		newReadyCmd(),
 		newDepCmd(),
 		newDeleteCmd(),
+		newLabelCmd(),
+		newCommentCmd(),
+		newHistoryCmd(),
+		newMigrateCmd(),
 	)
 	return root
 }
@@ -60,13 +64,12 @@ func main() {
 	}
 }
 
-// openStore is the shared command setup. Init does NOT call it.
 func openStore(cmd *cobra.Command) (*cmdCtx, error) {
 	cfg, err := config.Resolve(flagDB)
 	if err != nil {
 		return nil, err
 	}
-	st, err := storage.Open(cmd.Context(), cfg.DSN)
+	st, err := store.Open(cmd.Context(), cfg.DSN)
 	if err != nil {
 		return nil, err
 	}

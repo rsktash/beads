@@ -7,7 +7,7 @@ import (
 func newReadyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ready",
-		Short: "List issues with no open blockers",
+		Short: "List beads with no open blockers (and not deferred/ephemeral)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cc, err := openStore(cmd)
 			if err != nil {

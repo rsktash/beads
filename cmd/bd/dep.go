@@ -5,23 +5,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/rustamsmax/beads/internal/types"
+	"github.com/rsktash/beads"
 )
 
 func newDepCmd() *cobra.Command {
-	dep := &cobra.Command{
-		Use:   "dep",
-		Short: "Manage dependencies between issues",
-	}
+	dep := &cobra.Command{Use: "dep", Short: "Manage dependencies"}
 	dep.AddCommand(newDepAddCmd(), newDepRmCmd(), newDepListCmd())
 	return dep
 }
 
 func newDepAddCmd() *cobra.Command {
-	var typeStr string
+	var typeStr, threadID string
 	cmd := &cobra.Command{
-		Use:   "add <from> <to>",
-		Short: "Add a dependency. Default type is `blocks` (from blocks to).",
+		Use:   "add <issue> <depends-on>",
+		Short: "Add dependency: <issue> --type--> <depends-on>",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cc, err := openStore(cmd)
@@ -29,25 +26,29 @@ func newDepAddCmd() *cobra.Command {
 				return err
 			}
 			defer cc.store.Close()
-			dt, err := types.ParseDependencyType(typeStr)
+			dt, err := beads.ParseDependencyType(typeStr)
 			if err != nil {
 				return err
 			}
-			if err := cc.store.AddDependency(cc.ctx, args[0], args[1], dt); err != nil {
+			d := beads.Dependency{
+				IssueID: args[0], DependsOnID: args[1], Type: dt, ThreadID: threadID,
+				CreatedBy: assigneeFromEnv(),
+			}
+			if err := cc.store.AddDependency(cc.ctx, d); err != nil {
 				return err
 			}
 			fmt.Printf("%s -%s-> %s\n", args[0], dt, args[1])
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&typeStr, "type", "t", string(types.DepBlocks), "dependency type (blocks|relates_to|duplicates|supersedes|replies_to|parent_of)")
+	cmd.Flags().StringVarP(&typeStr, "type", "t", string(beads.DepBlocks), "dependency type (blocks|related|duplicates|supersedes|replies-to|parent-child|discovered-by)")
+	cmd.Flags().StringVar(&threadID, "thread", "", "thread id (for message threads)")
 	return cmd
 }
 
 func newDepRmCmd() *cobra.Command {
-	var typeStr string
-	cmd := &cobra.Command{
-		Use:   "rm <from> <to>",
+	return &cobra.Command{
+		Use:   "rm <issue> <depends-on>",
 		Short: "Remove a dependency",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,15 +57,9 @@ func newDepRmCmd() *cobra.Command {
 				return err
 			}
 			defer cc.store.Close()
-			dt, err := types.ParseDependencyType(typeStr)
-			if err != nil {
-				return err
-			}
-			return cc.store.RemoveDependency(cc.ctx, args[0], args[1], dt)
+			return cc.store.RemoveDependency(cc.ctx, args[0], args[1])
 		},
 	}
-	cmd.Flags().StringVarP(&typeStr, "type", "t", string(types.DepBlocks), "dependency type")
-	return cmd
 }
 
 func newDepListCmd() *cobra.Command {
@@ -86,7 +81,7 @@ func newDepListCmd() *cobra.Command {
 				return writeJSON(deps)
 			}
 			for _, d := range deps {
-				fmt.Printf("%s -%s-> %s\n", d.FromID, d.Type, d.ToID)
+				fmt.Printf("%s -%s-> %s\n", d.IssueID, d.Type, d.DependsOnID)
 			}
 			return nil
 		},

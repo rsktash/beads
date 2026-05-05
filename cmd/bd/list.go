@@ -3,8 +3,8 @@ package main
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/rustamsmax/beads/internal/storage"
-	"github.com/rustamsmax/beads/internal/types"
+	"github.com/rsktash/beads"
+	"github.com/rsktash/beads/store"
 )
 
 func newListCmd() *cobra.Command {
@@ -17,7 +17,7 @@ func newListCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List issues",
+		Short: "List beads",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cc, err := openStore(cmd)
 			if err != nil {
@@ -25,16 +25,16 @@ func newListCmd() *cobra.Command {
 			}
 			defer cc.store.Close()
 
-			f := storage.ListFilter{Assignee: assignee, Limit: limit}
+			f := store.ListFilter{Assignee: assignee, Limit: limit}
 			if statusStr != "" {
-				st, err := types.ParseStatus(statusStr)
+				st, err := beads.ParseStatus(statusStr)
 				if err != nil {
 					return err
 				}
 				f.Status = &st
 			}
 			if typeStr != "" {
-				t, err := types.ParseType(typeStr)
+				t, err := beads.ParseType(typeStr)
 				if err != nil {
 					return err
 				}

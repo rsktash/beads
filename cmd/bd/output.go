@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/rustamsmax/beads/internal/types"
+	"github.com/rsktash/beads"
 )
 
 func writeJSON(v any) error {
@@ -16,7 +16,7 @@ func writeJSON(v any) error {
 	return enc.Encode(v)
 }
 
-func printIssueTable(issues []types.Issue) {
+func printIssueTable(issues []beads.Issue) {
 	if len(issues) == 0 {
 		return
 	}

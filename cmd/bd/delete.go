@@ -9,7 +9,7 @@ import (
 func newDeleteCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete <id>...",
-		Short: "Permanently delete issues",
+		Short: "Permanently delete beads (cascades to deps, labels, comments, events)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cc, err := openStore(cmd)
