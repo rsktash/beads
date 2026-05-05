@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>BD</title>
+  <rect width="512" height="512" rx="115" fill="#1F2937"/>
+  <path d="M 128 128 L 288 128 A 128 128 0 0 1 288 384 L 128 384 Z M 176 176 L 176 336 L 288 336 A 80 80 0 0 0 288 176 Z" fill="#FDFBF7" fill-rule="evenodd"/>
+  <circle cx="384" cy="160" r="44" fill="#DC2626"/>
+</svg>

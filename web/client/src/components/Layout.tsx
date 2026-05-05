@@ -44,12 +44,8 @@ const SignOutIcon = () => (
   </svg>
 );
 
-const LogoIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="white">
-    <circle cx="7" cy="4" r="2.5" />
-    <circle cx="4" cy="10" r="2.5" />
-    <circle cx="10" cy="10" r="2.5" />
-  </svg>
+const LogoMark = () => (
+  <img src="/bd-favicon-32.svg" alt="bd" width={28} height={28} />
 );
 
 const ChevronIcon = () => (
@@ -170,12 +166,7 @@ export function Layout({ children }: { children: ReactNode }) {
       >
         {/* logo */}
         <div className="flex items-center gap-2.5 px-4 py-5">
-          <span
-            className="flex items-center justify-center rounded-md"
-            style={{ width: 28, height: 28, background: "var(--color-accent)" }}
-          >
-            <LogoIcon />
-          </span>
+          <LogoMark />
           <span
             className="font-bold"
             style={{ fontSize: 16, color: "var(--color-ink-primary)" }}
