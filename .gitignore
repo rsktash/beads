@@ -3,6 +3,7 @@
 *.db
 *.sqlite
 *.sqlite3
+.env
 
 # web client artifacts
 web/node_modules/

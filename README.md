@@ -27,6 +27,43 @@ go build -o bd ./cmd/bd
 
 > SQLite uses `mattn/go-sqlite3` (CGO). Default `go build` works on macOS/Linux.
 
+## Web UI
+
+There's a web UI in [`web/`](web/) (`@rsktash/bd-web` on npm). Same workspace,
+runs locally or on a server, no Go runtime needed at deploy time. See the
+[web README](web/README.md) for details.
+
+## Docker Compose
+
+A reference [`docker-compose.yml`](docker-compose.yml) at the repo root. Two
+profiles to choose from:
+
+```sh
+# 1) just Postgres. The Go CLI on your host connects from outside.
+cp .env.example .env       # edit POSTGRES_PASSWORD
+docker compose --profile db up -d
+
+# point your CLI at it (one schema per project — `search_path=<prefix>`):
+bd init --prefix myproject \
+  --db "postgres://bd@127.0.0.1:5432/tracker?sslmode=disable"
+export BD_DB_PASSWORD=$(grep ^POSTGRES_PASSWORD .env | cut -d= -f2)
+bd create "first issue" -p 0
+```
+
+```sh
+# 2) full stack: Postgres + bd-web (the web UI). bd-web is built from web/.
+cp .env.example .env       # edit POSTGRES_PASSWORD; set BD_PREFIX
+docker compose --profile full up -d --build
+# → http://127.0.0.1:3333
+```
+
+The two profiles share the same Postgres; the only extra thing the `full`
+profile adds is the `bd-web` service. `BD_PREFIX` in `.env` controls which
+schema bd-web targets — it must match the `--prefix` you used at `bd init`.
+
+To enable auth on the web UI, drop a `users.json` next to `.bd/` and uncomment
+`BD_WEB_AUTH_FILE` in `docker-compose.yml`. See [web/README.md](web/README.md).
+
 ## Quickstart
 
 ```sh

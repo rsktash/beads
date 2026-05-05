@@ -1,0 +1,53 @@
+# Reference docker-compose for running bd against a shared Postgres.
+#
+# Two patterns supported:
+#
+#   a) Just the database (uncomment `postgres` only). The Go CLI on your
+#      host connects from outside; no Node container needed.
+#
+#   b) Full stack (`postgres` + `bd-web`). The web UI runs in a container
+#      and connects to postgres over the compose network. Workspace is
+#      bind-mounted so .bd/config travels with it.
+#
+# Pick a docker-compose profile via `--profile <name>`.
+
+services:
+  postgres:
+    image: postgres:16
+    profiles: [db, full]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tracker}
+      POSTGRES_USER: ${POSTGRES_USER:-bd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  bd-web:
+    build: ./web
+    profiles: [full]
+    environment:
+      # The DSN points the web at our Postgres. search_path is the project's
+      # prefix (one schema per project — see README "Multi-project" section).
+      BD_DB: postgres://${POSTGRES_USER:-bd}@postgres:5432/${POSTGRES_DB:-tracker}?sslmode=disable&search_path=${BD_PREFIX:-bd}
+      BD_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      HOST: 0.0.0.0
+      PORT: 3333
+      # Optional: enable auth by mounting a JSON users file and pointing at it.
+      # BD_WEB_AUTH_FILE: /workspace/.bd/users.json
+    ports:
+      - "${BD_WEB_PORT:-3333}:3333"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
