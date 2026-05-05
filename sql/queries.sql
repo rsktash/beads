@@ -87,6 +87,15 @@ VALUES (sqlc.arg('id'), sqlc.arg('issue_id'), sqlc.arg('event_type'),
 -- name: ListEvents :many
 SELECT * FROM events WHERE issue_id = sqlc.arg('issue_id') ORDER BY created_at;
 
+-- name: NextChildIndex :one
+-- Atomically increment the per-parent counter and return the new value. The
+-- ON CONFLICT ... DO UPDATE ... RETURNING form works on both SQLite (>=3.35)
+-- and Postgres, which is what the project targets.
+INSERT INTO child_counters (parent_id, last_child)
+VALUES (sqlc.arg('parent_id'), 1)
+ON CONFLICT(parent_id) DO UPDATE SET last_child = child_counters.last_child + 1
+RETURNING last_child;
+
 -- name: ReadyAt :many
 -- Open, non-ephemeral, non-template, no `blocks` dep from a non-{closed,pinned}
 -- issue, not deferred. `now` is supplied by the caller for portability.

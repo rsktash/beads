@@ -30,7 +30,7 @@ go build -o bd ./cmd/bd
 ## Quickstart
 
 ```sh
-bd init                                 # creates .beads/beads.db (SQLite)
+bd init --prefix yuklar                 # creates .beads/beads.db, ids look like yuklar-a1b2
 bd create "Set up CI" -p 0              # priorities 0..4 (0=highest)
 bd create "Add login endpoint"
 ID=$(bd --json create "Wire login UI" -p 1 | jq -r .id)
@@ -109,6 +109,24 @@ dolt sql-server -P 3306 -u root --no-auto-commit
 bd migrate --from "root@tcp(127.0.0.1:3306)/beads"
 # add --force to overwrite existing rows
 ```
+
+## ID format
+
+`<prefix>-<base36>` — e.g. `yuklar-a1b2`. Matches upstream:
+
+- `prefix` is per-project, stored in `.beads/config`. `bd init --prefix foo`
+  sets it explicitly; otherwise it's auto-derived from the DSN's database name
+  (postgres `.../yuklar` → `yuklar`, mysql `.../yuklar` → `yuklar`,
+  `auth.db` → `auth`), falling back to `bd`.
+- The hash is the rightmost N base36 digits of `SHA-256(title|description|
+  created_by|nonce)`. On collision the nonce increments and the hash recomputes
+  — so newly created issues with identical content get distinct ids
+  deterministically.
+- Default length is 4 chars (`36⁴ ≈ 1.7M` ids per prefix); `idgen` accepts
+  3–8.
+- Hierarchical ids (`yuklar-a1b2.1`, `yuklar-a1b2.2`, …) come from a
+  `child_counters` table with `INSERT … ON CONFLICT DO UPDATE … RETURNING` so
+  concurrent allocation stays correct.
 
 ## DSN resolution
 

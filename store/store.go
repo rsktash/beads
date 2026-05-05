@@ -43,18 +43,34 @@ var schemaSQLite string
 //go:embed schema.postgres.sql
 var schemaPostgres string
 
-// Store is the canonical handle. Open with Open(dsn).
+// Store is the canonical handle. Open with Open(dsn) or OpenWithPrefix(dsn, p).
 type Store struct {
 	db     *sql.DB
 	driver Driver
+	prefix string            // id prefix; "<prefix>-<hash>" form
 	sqlite *sqlitedb.Queries // non-nil iff driver == DriverSQLite
 	pg     *pgdb.Queries     // non-nil iff driver == DriverPostgres
 }
 
-// Open accepts:
+// Prefix returns the id prefix used for newly created beads.
+func (s *Store) Prefix() string { return s.prefix }
+
+// SetPrefix overrides the id prefix on an open Store. Useful for migrate, where
+// the destination should adopt the source's prefix.
+func (s *Store) SetPrefix(p string) { s.prefix = p }
+
+// Open is shorthand for OpenWithPrefix(ctx, dsn, "") which auto-derives the
+// prefix from the DSN.
+func Open(ctx context.Context, dsn string) (*Store, error) {
+	return OpenWithPrefix(ctx, dsn, "")
+}
+
+// OpenWithPrefix accepts:
 //   - sqlite path or sqlite:... DSN
 //   - postgres://user:pass@host/db?sslmode=disable
-func Open(ctx context.Context, dsn string) (*Store, error) {
+//
+// If prefix is empty it's derived from the DSN's database name.
+func OpenWithPrefix(ctx context.Context, dsn, prefix string) (*Store, error) {
 	driver, conn, err := parseDSN(dsn)
 	if err != nil {
 		return nil, err
@@ -75,7 +91,10 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 			return nil, fmt.Errorf("sqlite pragmas: %w", err)
 		}
 	}
-	s := &Store{db: db, driver: driver}
+	if prefix == "" {
+		prefix = derivePrefix(dsn)
+	}
+	s := &Store{db: db, driver: driver, prefix: prefix}
 	switch driver {
 	case DriverSQLite:
 		s.sqlite = sqlitedb.New(db)
@@ -125,13 +144,19 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
-// CreateIssue inserts a new issue. If i.ID is empty a hash id is generated and
-// retried on collision. Always sets created_at/updated_at if zero.
+// CreateIssue inserts a new issue. If i.ID is empty an id of the form
+// "<prefix>-<base36hash>" is generated from the bead's content; on collision
+// the nonce is incremented and the hash recomputed.
 func (s *Store) CreateIssue(ctx context.Context, i *beads.Issue) error {
 	if i.ID == "" {
-		for attempt := 0; attempt < 8; attempt++ {
-			i.ID = idgen.New()
-			err := s.insertIssue(ctx, i)
+		seed := i.Title + "|" + i.Description + "|" + i.CreatedBy
+		for nonce := uint64(0); nonce < 32; nonce++ {
+			id, err := idgen.New(s.prefix, seed, idgen.DefaultLen, nonce)
+			if err != nil {
+				return err
+			}
+			i.ID = id
+			err = s.insertIssue(ctx, i)
 			if err == nil {
 				return nil
 			}
@@ -139,9 +164,30 @@ func (s *Store) CreateIssue(ctx context.Context, i *beads.Issue) error {
 				return err
 			}
 		}
-		return fmt.Errorf("idgen: exhausted retries")
+		return fmt.Errorf("idgen: exhausted nonces")
 	}
 	return s.insertIssue(ctx, i)
+}
+
+// NextChildID atomically allocates the next hierarchical id under parent
+// ("parent.1", "parent.2", ...). Uses the child_counters table.
+func (s *Store) NextChildID(ctx context.Context, parent string) (string, error) {
+	var n int
+	switch s.driver {
+	case DriverSQLite:
+		v, err := s.sqlite.NextChildIndex(ctx, parent)
+		if err != nil {
+			return "", err
+		}
+		n = int(v)
+	case DriverPostgres:
+		v, err := s.pg.NextChildIndex(ctx, parent)
+		if err != nil {
+			return "", err
+		}
+		n = int(v)
+	}
+	return idgen.ChildID(parent, n), nil
 }
 
 func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
@@ -680,7 +726,8 @@ func (s *Store) ListEvents(ctx context.Context, issueID string) ([]beads.Event, 
 }
 
 // ChildCount returns how many parent-child dependencies declare this issue as
-// the parent (depends_on). Used by the id generator for hierarchical ids.
+// the parent (depends_on). Informational only — for atomic next-id allocation
+// use NextChildID instead.
 func (s *Store) ChildCount(ctx context.Context, parent string) (int, error) {
 	switch s.driver {
 	case DriverSQLite:
@@ -744,8 +791,51 @@ func (s *Store) rebind(q string) string {
 	return out.String()
 }
 
-// idgen helpers
-var _ = idgen.New // keep import even if unused in tests
+// derivePrefix mirrors config.PrefixFromDSN but lives in store/ so the
+// package has zero coupling to config beyond the CLI layer. Keep the two in
+// sync.
+func derivePrefix(dsn string) string {
+	switch {
+	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
+		rest := dsn
+		if i := strings.Index(rest, "://"); i >= 0 {
+			rest = rest[i+3:]
+		}
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			rest = rest[slash+1:]
+			if q := strings.Index(rest, "?"); q >= 0 {
+				rest = rest[:q]
+			}
+			if rest != "" {
+				return rest
+			}
+		}
+	case strings.Contains(dsn, "tcp(") && strings.Contains(dsn, ")/"):
+		if i := strings.Index(dsn, ")/"); i >= 0 {
+			rest := dsn[i+2:]
+			if q := strings.Index(rest, "?"); q >= 0 {
+				rest = rest[:q]
+			}
+			if rest != "" {
+				return rest
+			}
+		}
+	}
+	base := dsn
+	if i := strings.LastIndexAny(base, "/\\"); i >= 0 {
+		base = base[i+1:]
+	}
+	for _, ext := range []string{".db", ".sqlite", ".sqlite3"} {
+		if strings.HasSuffix(base, ext) {
+			base = strings.TrimSuffix(base, ext)
+			break
+		}
+	}
+	if base == "" || base == "beads" {
+		return "bd"
+	}
+	return base
+}
 
 func nullTime(t *time.Time) sql.NullTime {
 	if t == nil {

@@ -71,7 +71,7 @@ func openStore(cmd *cobra.Command) (*cmdCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.Open(cmd.Context(), cfg.DSN)
+	st, err := store.OpenWithPrefix(cmd.Context(), cfg.DSN, cfg.Prefix)
 	if err != nil {
 		return nil, err
 	}

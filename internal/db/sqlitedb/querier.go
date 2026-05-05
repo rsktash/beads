@@ -27,6 +27,10 @@ type Querier interface {
 	ListDependenciesTouching(ctx context.Context, id string) ([]Dependency, error)
 	ListEvents(ctx context.Context, issueID string) ([]Event, error)
 	ListLabels(ctx context.Context, issueID string) ([]string, error)
+	// Atomically increment the per-parent counter and return the new value. The
+	// ON CONFLICT ... DO UPDATE ... RETURNING form works on both SQLite (>=3.35)
+	// and Postgres, which is what the project targets.
+	NextChildIndex(ctx context.Context, parentID string) (int64, error)
 	// Open, non-ephemeral, non-template, no `blocks` dep from a non-{closed,pinned}
 	// issue, not deferred. `now` is supplied by the caller for portability.
 	ReadyAt(ctx context.Context, now sql.NullTime) ([]Issue, error)

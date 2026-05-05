@@ -196,6 +196,66 @@ func TestUpdateAndFilters(t *testing.T) {
 	}
 }
 
+func TestPrefixAndIDFormat(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "yuklar.db")
+	st, err := store.OpenWithPrefix(ctx, dsn, "yuklar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	i := &beads.Issue{Title: "first", Type: beads.TypeTask, Status: beads.StatusOpen, Priority: 1}
+	if err := st.CreateIssue(ctx, i); err != nil {
+		t.Fatal(err)
+	}
+	if !startsWith(i.ID, "yuklar-") {
+		t.Fatalf("id should start with 'yuklar-', got %q", i.ID)
+	}
+	hash := i.ID[len("yuklar-"):]
+	if len(hash) < 3 || len(hash) > 8 {
+		t.Fatalf("hash length out of range: %q", hash)
+	}
+	for _, c := range hash {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+			t.Fatalf("hash should be base36, got char %q in %q", c, hash)
+		}
+	}
+
+	// Same content + different nonce ⇒ no collision: create a second issue with
+	// the same title, distinct id.
+	j := &beads.Issue{Title: "first", Type: beads.TypeTask, Status: beads.StatusOpen, Priority: 1}
+	if err := st.CreateIssue(ctx, j); err != nil {
+		t.Fatal(err)
+	}
+	if i.ID == j.ID {
+		t.Fatalf("collision retry failed: both got %s", i.ID)
+	}
+}
+
+func TestNextChildIDAtomic(t *testing.T) {
+	ctx := context.Background()
+	st := newSqliteStore(t)
+	parent := mkIssue(t, st, "epic", 0)
+
+	c1, err := st.NextChildID(ctx, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := st.NextChildID(ctx, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c1 != parent.ID+".1" {
+		t.Fatalf("first child should be %s.1, got %s", parent.ID, c1)
+	}
+	if c2 != parent.ID+".2" {
+		t.Fatalf("second child should be %s.2, got %s", parent.ID, c2)
+	}
+}
+
+func startsWith(s, p string) bool { return len(s) >= len(p) && s[:len(p)] == p }
+
 func TestCheckConstraints(t *testing.T) {
 	st := newSqliteStore(t)
 	ctx := context.Background()

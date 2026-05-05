@@ -94,3 +94,8 @@ CREATE TABLE events (
 );
 CREATE INDEX idx_events_issue      ON events(issue_id);
 CREATE INDEX idx_events_created_at ON events(created_at);
+
+CREATE TABLE child_counters (
+    parent_id  TEXT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
+    last_child INTEGER NOT NULL DEFAULT 0
+);

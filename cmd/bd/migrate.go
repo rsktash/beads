@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rsktash/beads"
+	"github.com/rsktash/beads/internal/config"
 	"github.com/rsktash/beads/store"
 )
 
@@ -56,6 +57,13 @@ this command at it via --from with a MySQL DSN.`,
 			defer src.Close()
 			if err := src.PingContext(cc.ctx); err != nil {
 				return fmt.Errorf("ping source: %w", err)
+			}
+
+			// Adopt the source's prefix so newly-created beads after
+			// migration share the same id namespace as the imported ones.
+			if srcPrefix := config.PrefixFromDSN(from); srcPrefix != "" && srcPrefix != "bd" {
+				cc.store.SetPrefix(srcPrefix)
+				fmt.Printf("(prefix set to %q from source DSN)\n", srcPrefix)
 			}
 
 			m := &migrator{src: src, dst: cc.store, force: force}

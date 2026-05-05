@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+type ChildCounter struct {
+	ParentID  string `json:"parent_id"`
+	LastChild int32  `json:"last_child"`
+}
+
 type Comment struct {
 	ID        string    `json:"id"`
 	IssueID   string    `json:"issue_id"`

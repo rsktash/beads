@@ -100,3 +100,11 @@ CREATE TABLE events (
 );
 CREATE INDEX idx_events_issue      ON events(issue_id);
 CREATE INDEX idx_events_created_at ON events(created_at);
+
+-- Per-parent atomic counter for hierarchical ids ("bd-a3f8.1", "bd-a3f8.2", …).
+-- Upsert with `INSERT … ON CONFLICT DO UPDATE … RETURNING last_child` so
+-- concurrent allocations stay correct.
+CREATE TABLE child_counters (
+    parent_id  TEXT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
+    last_child INTEGER NOT NULL DEFAULT 0
+);

@@ -472,6 +472,23 @@ func (q *Queries) ListLabels(ctx context.Context, issueID string) ([]string, err
 	return items, nil
 }
 
+const nextChildIndex = `-- name: NextChildIndex :one
+INSERT INTO child_counters (parent_id, last_child)
+VALUES ($1, 1)
+ON CONFLICT(parent_id) DO UPDATE SET last_child = child_counters.last_child + 1
+RETURNING last_child
+`
+
+// Atomically increment the per-parent counter and return the new value. The
+// ON CONFLICT ... DO UPDATE ... RETURNING form works on both SQLite (>=3.35)
+// and Postgres, which is what the project targets.
+func (q *Queries) NextChildIndex(ctx context.Context, parentID string) (int32, error) {
+	row := q.db.QueryRowContext(ctx, nextChildIndex, parentID)
+	var last_child int32
+	err := row.Scan(&last_child)
+	return last_child, err
+}
+
 const readyAt = `-- name: ReadyAt :many
 SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes, i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes, i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.closed_by_session, i.external_ref, i.spec_id, i.metadata, i.source_repo, i.source_system, i.close_reason, i.sender, i.ephemeral, i.pinned, i.is_template, i.wisp_type, i.mol_type, i.role_type, i.event_kind, i.actor, i.target, i.payload, i.started_at, i.due_at, i.defer_until FROM issues i
 WHERE i.status = 'open'
