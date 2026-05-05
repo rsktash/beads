@@ -942,6 +942,115 @@ func (s *Store) ListDependencies(ctx context.Context, id string) ([]beads.Depend
 	return nil, fmt.Errorf("unknown driver")
 }
 
+// DescendantIssue is one row from a parent-child tree walk.
+type DescendantIssue struct {
+	Depth int
+	Issue beads.Issue
+}
+
+// Descendants walks the parent-child tree under parentID and returns
+// each descendant issue once (the shortest depth to it for diamond
+// trees), with the full issue row attached. Cost: 2 round trips
+// regardless of tree size — a recursive CTE for the (id, depth) pairs
+// and a single IN-list fetch for the issue rows.
+//
+// recursive=false returns only direct children. maxDepth caps the walk
+// (default 8) — set to 1 for the non-recursive case.
+func (s *Store) Descendants(ctx context.Context, parentID string, recursive bool, maxDepth int) ([]DescendantIssue, error) {
+	if maxDepth <= 0 {
+		maxDepth = 8
+	}
+	if !recursive {
+		maxDepth = 1
+	}
+	cte := `WITH RECURSIVE tree AS (
+		SELECT issue_id, 1 AS depth
+		  FROM dependencies
+		 WHERE depends_on_id = ? AND type = 'parent-child'
+		UNION ALL
+		SELECT d.issue_id, t.depth + 1
+		  FROM dependencies d
+		  JOIN tree t ON d.depends_on_id = t.issue_id
+		 WHERE d.type = 'parent-child' AND t.depth < ?
+	)
+	SELECT issue_id, MIN(depth) FROM tree GROUP BY issue_id`
+	q := s.rebind(cte)
+	rows, err := s.db.QueryContext(ctx, q, parentID, maxDepth)
+	if err != nil {
+		return nil, err
+	}
+	type idDepth struct {
+		ID    string
+		Depth int
+	}
+	var pairs []idDepth
+	for rows.Next() {
+		var id string
+		var depth int
+		if err := rows.Scan(&id, &depth); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		pairs = append(pairs, idDepth{ID: id, Depth: depth})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, len(pairs))
+	for i, p := range pairs {
+		ids[i] = p.ID
+	}
+	issues, err := s.fetchIssuesByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DescendantIssue, 0, len(pairs))
+	for _, p := range pairs {
+		if i, ok := issues[p.ID]; ok {
+			out = append(out, DescendantIssue{Depth: p.Depth, Issue: i})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Depth != out[j].Depth {
+			return out[i].Depth < out[j].Depth
+		}
+		if out[i].Issue.Priority != out[j].Issue.Priority {
+			return out[i].Issue.Priority < out[j].Issue.Priority
+		}
+		return out[i].Issue.CreatedAt.Before(out[j].Issue.CreatedAt)
+	})
+	return out, nil
+}
+
+// fetchIssuesByIDs reads every requested issue in one round trip.
+func (s *Store) fetchIssuesByIDs(ctx context.Context, ids []string) (map[string]beads.Issue, error) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	q := s.rebind("SELECT * FROM issues WHERE id IN (" + strings.Join(placeholders, ",") + ")")
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]beads.Issue, len(ids))
+	for rows.Next() {
+		issue, err := scanIssue(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[issue.ID] = *issue
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) forwardBlocks(ctx context.Context, id string) (map[string]struct{}, error) {
 	out := map[string]struct{}{}
 	queue := []string{id}

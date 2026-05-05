@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	"github.com/spf13/cobra"
 
@@ -97,48 +96,20 @@ type indentedIssue struct {
 	issue beads.Issue
 }
 
+// walkChildren returns the parent-child descendants of parentID.
+//
+// Backed by Store.Descendants, which executes a recursive CTE in one
+// round trip (plus an IN-list fetch for the rows) — replacing the prior
+// 1+N+N×depth round-trip walk that made `bd children` and
+// `bd ready --parent <epic>` 6-12s on remote Postgres.
 func walkChildren(ctx context.Context, st *store.Store, parentID string, recursive bool) ([]indentedIssue, error) {
-	out := []indentedIssue{}
-	visited := map[string]bool{parentID: true}
-	var walk func(pid string, depth int) error
-	walk = func(pid string, depth int) error {
-		if depth > 8 { // hard cap
-			return nil
-		}
-		deps, err := st.ListDependencies(ctx, pid)
-		if err != nil {
-			return err
-		}
-		// children of pid: rows where depends_on_id=pid AND type=parent-child
-		var kids []beads.Dependency
-		for _, d := range deps {
-			if d.Type == beads.DepParentChild && d.DependsOnID == pid {
-				kids = append(kids, d)
-			}
-		}
-		// stable order: by child issue's priority then created_at — but we
-		// don't have those without an extra GetIssue. Compromise: sort by id.
-		sort.Slice(kids, func(i, j int) bool { return kids[i].IssueID < kids[j].IssueID })
-		for _, k := range kids {
-			if visited[k.IssueID] {
-				continue
-			}
-			visited[k.IssueID] = true
-			child, err := st.GetIssue(ctx, k.IssueID)
-			if err != nil {
-				continue
-			}
-			out = append(out, indentedIssue{depth: depth, issue: *child})
-			if recursive {
-				if err := walk(k.IssueID, depth+1); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	if err := walk(parentID, 0); err != nil {
+	rows, err := st.Descendants(ctx, parentID, recursive, 8)
+	if err != nil {
 		return nil, err
+	}
+	out := make([]indentedIssue, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, indentedIssue{depth: r.Depth - 1, issue: r.Issue})
 	}
 	return out, nil
 }
