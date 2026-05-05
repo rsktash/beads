@@ -47,12 +47,16 @@ func newSchemaCmd() *cobra.Command {
 		&cobra.Command{
 			Use: "apply", Short: "Apply any pending migrations",
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				// Just opening the store runs migrate(); print status after.
+				// Open() runs cached migrate(); ForceMigrate bypasses the
+				// cache so this command always re-verifies against the DB.
 				cc, err := openStore(cmd)
 				if err != nil {
 					return err
 				}
 				defer cc.store.Close()
+				if err := cc.store.ForceMigrate(cc.ctx); err != nil {
+					return err
+				}
 				st, err := cc.store.MigrationStatus(cc.ctx)
 				if err != nil {
 					return err

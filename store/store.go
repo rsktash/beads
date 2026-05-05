@@ -8,11 +8,15 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -74,6 +78,7 @@ var migrationsFS embed.FS
 type Store struct {
 	db     *sql.DB
 	driver Driver
+	dsn    string // original DSN; used as the migration-cache key
 	sqlite *sqlitedb.Queries
 	pg     *pgdb.Queries
 }
@@ -117,7 +122,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 			}
 		}
 	}
-	s := &Store{db: db, driver: driver}
+	s := &Store{db: db, driver: driver, dsn: dsn}
 	switch driver {
 	case DriverSQLite:
 		s.sqlite = sqlitedb.New(db)
@@ -173,7 +178,41 @@ func (s *Store) DB() *sql.DB    { return s.db }
 // in the `schema_migrations` table. Each migration file is idempotent
 // (CREATE TABLE IF NOT EXISTS) so applying 0001 against a pre-existing
 // database is a safe no-op that just records the version.
+//
+// Fast path: a per-DSN cache file in the user cache dir records the hash
+// of the migration set last verified against this DSN. When the hash
+// matches, migrate() returns immediately — no DB round trips. The cache
+// invalidates naturally when the binary ships new migrations.
 func (s *Store) migrate(ctx context.Context) error {
+	expected, hashErr := s.expectedMigrationHash()
+	if hashErr == nil {
+		if cached, _ := s.readMigrationCache(); cached == expected {
+			return nil
+		}
+	}
+	if err := s.migrateDB(ctx); err != nil {
+		return err
+	}
+	if hashErr == nil {
+		_ = s.writeMigrationCache(expected) // best effort
+	}
+	return nil
+}
+
+// ForceMigrate bypasses the cache and re-runs migrate against the DB.
+// Used by `bd schema apply` so the user can re-verify after manual
+// tinkering or a downgrade.
+func (s *Store) ForceMigrate(ctx context.Context) error {
+	if err := s.migrateDB(ctx); err != nil {
+		return err
+	}
+	if expected, err := s.expectedMigrationHash(); err == nil {
+		_ = s.writeMigrationCache(expected)
+	}
+	return nil
+}
+
+func (s *Store) migrateDB(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    INTEGER PRIMARY KEY,
 		applied_at `+timestampType(s.driver)+` NOT NULL
@@ -201,6 +240,58 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// expectedMigrationHash hashes the (driver, version-list) pair so that a
+// new bd binary that ships an additional migration produces a different
+// hash, invalidating any prior cache file.
+func (s *Store) expectedMigrationHash() (string, error) {
+	migs, err := loadMigrations(s.driver)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n", s.driver)
+	for _, m := range migs {
+		fmt.Fprintf(&b, "%d\n", m.version)
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func (s *Store) migrationCachePath() (string, error) {
+	if s.dsn == "" {
+		return "", errors.New("no dsn")
+	}
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	h := sha256.Sum256([]byte(s.dsn))
+	return filepath.Join(base, "bd", "migrations", hex.EncodeToString(h[:])), nil
+}
+
+func (s *Store) readMigrationCache() (string, error) {
+	p, err := s.migrationCachePath()
+	if err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+func (s *Store) writeMigrationCache(hash string) error {
+	p, err := s.migrationCachePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(hash+"\n"), 0o644)
 }
 
 func (s *Store) appliedMigrations(ctx context.Context) (map[int]bool, error) {
