@@ -94,22 +94,38 @@ function Column({
   );
 }
 
+const CLOSED_LIMIT = 50;
+
 function BoardComponent() {
   const { prefix } = Route.useParams();
-  const all = useQuery({
-    queryKey: ["issues", prefix],
-    queryFn: () => api.listIssues({}),
-    refetchInterval: 60_000, // SSE pushes invalidations; this is a safety fallback
+  // Active beads (open / in_progress / blocked) — bounded set, no limit.
+  // Closed beads grow without bound; fetched separately, sorted closed_at
+  // DESC, capped at CLOSED_LIMIT so a project with hundreds of closed items
+  // doesn't ship 200+ rows on every poll.
+  const active = useQuery({
+    queryKey: ["issues", prefix, "active"],
+    queryFn: () => api.listIssues({ status_in: "open,in_progress,blocked" }),
+    refetchInterval: 60_000,
+  });
+  const closed = useQuery({
+    queryKey: ["issues", prefix, "closed"],
+    queryFn: () => api.listIssues({
+      status: "closed",
+      order: "closed_at_desc",
+      limit: String(CLOSED_LIMIT),
+    }),
+    refetchInterval: 60_000,
   });
   const ready = useQuery({
     queryKey: ["issues", prefix, "ready"],
     queryFn: () => api.ready(),
-    refetchInterval: 60_000, // SSE pushes invalidations; this is a safety fallback
+    refetchInterval: 60_000,
   });
 
-  const issues = all.data?.issues ?? [];
-  const epics = issues.filter((i) => i.issue_type === "epic").length;
-  const byStatus = group(issues, (i) => i.status);
+  const activeIssues = active.data?.issues ?? [];
+  const closedIssues = closed.data?.issues ?? [];
+  const epics = activeIssues.filter((i) => i.issue_type === "epic").length;
+  const byStatus = group(activeIssues, (i) => i.status);
 
   // "Blocked" = literal status=blocked OR open issues with open blockers.
   // The /ready endpoint already excludes the second set from the Open column,
@@ -119,6 +135,7 @@ function BoardComponent() {
     ...(byStatus.get("open") ?? []).filter((i) => i.blocked_by_count > 0),
   ];
 
+  const loading = active.isLoading || closed.isLoading;
   return (
     <div>
       <div className="mb-6">
@@ -126,14 +143,16 @@ function BoardComponent() {
           Board
         </h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--color-ink-tertiary)" }}>
-          {all.isLoading ? "loading…" : `${issues.length} issues across ${epics} epics`}
+          {loading
+            ? "loading…"
+            : `${activeIssues.length} active across ${epics} epics · ${closedIssues.length} recently closed`}
         </p>
       </div>
       <div className="flex gap-4 overflow-x-auto items-start">
         <Column title="Open" statusKey="open" issues={ready.data?.issues ?? []} />
         <Column title="In Progress" statusKey="in_progress" issues={byStatus.get("in_progress") ?? []} />
         <Column title="Blocked" statusKey="blocked" issues={blocked} />
-        <Column title="Closed" statusKey="closed" issues={byStatus.get("closed") ?? []} dimmed />
+        <Column title="Closed" statusKey="closed" issues={closedIssues} dimmed />
       </div>
     </div>
   );

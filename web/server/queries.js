@@ -59,6 +59,16 @@ export async function listIssues(db, filters = {}, limit = 0) {
     where.push('i.status = ?');
     args.push(filters.status);
   }
+  if (filters.status_in) {
+    const list = String(filters.status_in)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (list.length) {
+      where.push(`i.status IN (${list.map(() => '?').join(',')})`);
+      args.push(...list);
+    }
+  }
   if (filters.type) {
     where.push('i.issue_type = ?');
     args.push(filters.type);
@@ -73,7 +83,16 @@ export async function listIssues(db, filters = {}, limit = 0) {
   }
   let sql = `SELECT ${ENRICHED_SLIM} FROM issues i`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
-  sql += ' ORDER BY i.priority ASC, i.created_at ASC';
+  // ORDER BY: priority is irrelevant once an issue is closed — caller can ask
+  // for closed_at_desc to get a "recently finished" feed. Default keeps
+  // priority primary with updated_at DESC as tiebreaker so stale work sinks.
+  // NULLS LAST handles postgres (defaults to NULLS FIRST on DESC); sqlite
+  // already places NULLs last by default but accepts the keyword.
+  if (filters.order === 'closed_at_desc') {
+    sql += ' ORDER BY i.closed_at DESC NULLS LAST, i.created_at DESC';
+  } else {
+    sql += ' ORDER BY i.priority ASC, i.updated_at DESC NULLS LAST';
+  }
   if (limit > 0) sql += ` LIMIT ${Number(limit) | 0}`;
   const rows = await db.all(sql, args);
   return rows.map(rowToIssue);
@@ -153,7 +172,7 @@ export async function readyIssues(db) {
             AND d.type = 'blocks'
             AND blocker.status NOT IN ('closed', 'pinned')
       )
-    ORDER BY i.priority ASC, i.created_at ASC`;
+    ORDER BY i.priority ASC, i.updated_at DESC NULLS LAST`;
   const now = new Date().toISOString();
   const rows = await db.all(sql, [now]);
   return rows.map(rowToIssue);
