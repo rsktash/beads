@@ -1,0 +1,5 @@
+/bd
+/.beads/
+*.db
+*.sqlite
+*.sqlite3
