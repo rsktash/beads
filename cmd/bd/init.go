@@ -58,7 +58,7 @@ The DSN may point at a local sqlite file or a remote postgres server.`,
 					return fmt.Errorf("write issue_id_mode: %w", err)
 				}
 			}
-			fmt.Printf("initialized %s (driver=%s)\n", cfg.DSN, st.Driver())
+			fmt.Printf("initialized %s (driver=%s)\n", cfg.DisplayDSN, st.Driver())
 			fmt.Printf("config:    %s/config\n", cfg.BeadDir)
 			fmt.Printf("prefix:    %s\n", prefix)
 			if idMode != "" {

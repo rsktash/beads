@@ -36,8 +36,9 @@ const (
 )
 
 type Config struct {
-	DSN     string // resolved DB connection string
-	BeadDir string // .bd directory path (may be empty if unresolved)
+	DSN        string // resolved DB connection string (with password if applicable)
+	BeadDir    string // .bd directory path (may be empty if unresolved)
+	DisplayDSN string // sanitised DSN safe for logs/stdout (no password)
 }
 
 // Resolve returns the connection config for the active project. It does NOT
@@ -71,6 +72,7 @@ func Resolve(explicitDSN string) (*Config, error) {
 		}
 		cfg.DSN = filepath.Join(dir, defaultName)
 	}
+	cfg.DisplayDSN, _ = stripPassword(cfg.DSN)
 	cfg.DSN = injectPassword(cfg.DSN, lookupDBPassword(cfg.BeadDir))
 	return cfg, nil
 }
@@ -277,7 +279,15 @@ func Init(dsn string) (*Config, error) {
 	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
 		return nil, err
 	}
-	cfg := &Config{DSN: dsn, BeadDir: dir} // return DSN with password so the caller can connect
+	// For the immediate Open call after Init, fold in the password from
+	// $BD_DB_PASSWORD or .env in cwd / .bd/.env. injectPassword is a no-op
+	// when the DSN already includes credentials.
+	runtime := injectPassword(dsn, lookupDBPassword(dir))
+	cfg := &Config{
+		DSN:        runtime,
+		BeadDir:    dir,
+		DisplayDSN: sanitised,
+	}
 	if hadPW {
 		fmt.Fprintln(os.Stderr,
 			"note: password stripped from DSN before saving to .bd/config — "+

@@ -4,6 +4,7 @@
 *.sqlite
 *.sqlite3
 .env
+.direnv/
 
 # web client artifacts
 web/node_modules/
