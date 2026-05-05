@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { etag } from 'hono/etag';
 import { randomUUID } from 'node:crypto';
 import {
   addComment,
@@ -20,6 +21,17 @@ import {
 // the same router serves every project.
 export function issuesRouter() {
   const r = new Hono();
+
+  // ETag for GET responses: the board and detail pages poll every 5s, so
+  // most refetches return identical bodies. The middleware hashes the
+  // serialized response and replies 304 with an empty body when the
+  // client's If-None-Match header matches — saves bandwidth and the
+  // client-side parse/render. Skipped for mutations.
+  const etagMiddleware = etag();
+  r.use('/*', async (c, next) => {
+    if (c.req.method !== 'GET') return next();
+    return etagMiddleware(c, next);
+  });
 
   r.get('/', async (c) => {
     const db = c.get('db');
