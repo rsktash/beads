@@ -91,4 +91,6 @@ export interface Me {
   auth_enabled: boolean;
   auth_fingerprint: string;
   bead_dir: string;
+  version: string;
+  file_attachment_base_url: string;
 }

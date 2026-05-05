@@ -1,5 +1,9 @@
 import { Hono } from 'hono';
+import { randomUUID } from 'node:crypto';
 import {
+  addComment,
+  addLabel,
+  deleteComment,
   getIssue,
   listBlockedBy,
   listComments,
@@ -7,6 +11,7 @@ import {
   listIssues,
   listLabels,
   readyIssues,
+  removeLabel,
 } from '../queries.js';
 
 export function issuesRouter(deps) {
@@ -36,6 +41,42 @@ export function issuesRouter(deps) {
       listBlockedBy(db, id, 5),
     ]);
     return c.json({ issue, labels, dependencies: deps, comments, blocked_by: blockedBy });
+  });
+
+  // ---------- comments ----------
+  r.post('/:id/comments', async (c) => {
+    const issueId = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+    const text = String(body.text || '').trim();
+    if (!text) return c.json({ error: 'text is required' }, 400);
+    const user = c.get('user') || { username: 'anon' };
+    const comment = await addComment(db, {
+      id: randomUUID(),
+      issueId,
+      author: user.username,
+      text,
+    });
+    return c.json({ comment });
+  });
+
+  r.delete('/:id/comments/:commentId', async (c) => {
+    await deleteComment(db, c.req.param('commentId'));
+    return c.json({ ok: true });
+  });
+
+  // ---------- labels ----------
+  r.post('/:id/labels', async (c) => {
+    const issueId = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+    const label = String(body.label || '').trim();
+    if (!label) return c.json({ error: 'label is required' }, 400);
+    await addLabel(db, issueId, label);
+    return c.json({ ok: true, label });
+  });
+
+  r.delete('/:id/labels/:label', async (c) => {
+    await removeLabel(db, c.req.param('id'), c.req.param('label'));
+    return c.json({ ok: true });
   });
 
   return r;

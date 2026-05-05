@@ -1,108 +1,472 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import type { Comment, Issue } from "../lib/types";
 import { PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
-import { useMemo } from "react";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { CopyId } from "../components/CopyId";
+import { Markdown } from "../components/Markdown";
+import { TableOfContents } from "../components/TableOfContents";
+import { getAvatarColor, getInitials } from "../lib/avatar";
 
 function IssueDetail() {
   const { id } = Route.useParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const q = useQuery({
     queryKey: ["issue", id],
     queryFn: () => api.getIssue(id),
     refetchInterval: 5000,
   });
 
-  if (q.isLoading) return <div className="text-stone-500">loading…</div>;
-  if (q.error) return <div className="text-red-600">{(q.error as Error).message}</div>;
-  if (!q.data) return null;
-  const { issue, labels, dependencies, comments } = q.data;
+  // Scroll to fragment after first render (e.g. /issue/foo#section).
+  useEffect(() => {
+    if (!q.data || !scrollRef.current) return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    const t = setTimeout(() => {
+      const el = scrollRef.current?.querySelector<HTMLElement>(`#${cssEsc(hash)}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+    return () => clearTimeout(t);
+  }, [q.data]);
+
+  const onBack = () => {
+    if (window.history.length > 1) window.history.back();
+    else navigate({ to: "/" });
+  };
+
+  const addComment = useMutation({
+    mutationFn: (text: string) => api.addComment(id, text),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["issue", id] }),
+  });
+  const addLabel = useMutation({
+    mutationFn: (label: string) => api.addLabel(id, label),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["issue", id] }),
+  });
+  const removeLabel = useMutation({
+    mutationFn: (label: string) => api.removeLabel(id, label),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["issue", id] }),
+  });
+
+  if (q.isLoading) return <div style={{ color: "var(--color-ink-tertiary)" }}>loading…</div>;
+  if (q.error)     return <div className="text-red-600">{(q.error as Error).message}</div>;
+  if (!q.data)     return null;
+
+  const { issue, labels, dependencies, comments, blocked_by } = q.data;
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 text-xs">
-          <span className="font-mono" style={{ color: "var(--color-ink-tertiary)" }}>{issue.id}</span>
-          <PriorityBadge priority={issue.priority} />
-          <StatusBadge status={issue.status} />
-          <TypeBadge type={issue.issue_type} />
-          {issue.assignee && (
-            <span style={{ color: "var(--color-ink-tertiary)" }}>@{issue.assignee}</span>
-          )}
+    <div className="flex h-full -m-6">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-5 max-w-4xl">
+        {/* breadcrumbs */}
+        <div
+          className="flex items-center gap-2 text-sm"
+          style={{ color: "var(--color-ink-tertiary)" }}
+        >
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1 transition-colors hover:opacity-100"
+            style={{ color: "var(--color-ink-tertiary)" }}
+          >
+            ← Back
+          </button>
+          <span>/</span>
+          <CopyId id={issue.id} />
         </div>
-        <h1 className="text-2xl font-semibold" style={{ color: "var(--color-ink-primary)" }}>
+
+        {/* parent breadcrumb */}
+        {issue.parent_id && (
+          <Link
+            to="/issue/$id"
+            params={{ id: issue.parent_id }}
+            className="block text-xs"
+            style={{ color: "var(--color-ink-tertiary)" }}
+          >
+            ↑ {issue.parent_id}
+            {issue.parent_title && (
+              <span className="ml-2" style={{ opacity: 0.7 }}>
+                {issue.parent_title}
+              </span>
+            )}
+          </Link>
+        )}
+
+        {/* title */}
+        <h1
+          className="text-2xl font-bold"
+          style={{ color: "var(--color-ink-primary)" }}
+        >
           {issue.title}
         </h1>
-        {labels.length > 0 && (
-          <div className="flex gap-1.5 text-xs">
-            {labels.map((l) => (
-              <span key={l} className="bg-stone-100 text-stone-700 rounded px-2 py-0.5">{l}</span>
-            ))}
-          </div>
+
+        <Section title="Description" body={issue.description}
+                 attachmentBaseUrl={me.data?.file_attachment_base_url}
+                 prefix={me.data?.project.prefix} />
+        <Section title="Acceptance Criteria" body={issue.acceptance_criteria}
+                 attachmentBaseUrl={me.data?.file_attachment_base_url}
+                 prefix={me.data?.project.prefix} />
+        <Section title="Notes" body={issue.notes}
+                 attachmentBaseUrl={me.data?.file_attachment_base_url}
+                 prefix={me.data?.project.prefix} />
+        <Section title="Design" body={issue.design}
+                 attachmentBaseUrl={me.data?.file_attachment_base_url}
+                 prefix={me.data?.project.prefix} />
+
+        {/* dependencies (full list — different from sidebar's blocked-by) */}
+        {dependencies.length > 0 && (
+          <Card label="Dependencies">
+            <ul className="space-y-1 text-sm">
+              {dependencies.map((d) => {
+                const inbound = d.depends_on_id === id;
+                const otherId = inbound ? d.issue_id : d.depends_on_id;
+                return (
+                  <li key={`${d.issue_id}->${d.depends_on_id}-${d.type}`} className="font-mono">
+                    {inbound ? "← " : "→ "}
+                    <span style={{ color: "var(--color-ink-tertiary)" }}>{d.type}</span>{" "}
+                    <Link
+                      to="/issue/$id"
+                      params={{ id: otherId }}
+                      style={{ color: "var(--color-accent)" }}
+                    >
+                      {otherId}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
         )}
+
+        {/* comments */}
+        <Comments
+          issue={issue}
+          comments={comments}
+          attachmentBaseUrl={me.data?.file_attachment_base_url}
+          prefix={me.data?.project.prefix}
+          onAdd={(text) => addComment.mutate(text)}
+          submitting={addComment.isPending}
+        />
       </div>
 
-      <Section title="description" body={issue.description} />
-      <Section title="design" body={issue.design} />
-      <Section title="acceptance criteria" body={issue.acceptance_criteria} />
-      <Section title="notes" body={issue.notes} />
+      {/* right metadata sidebar */}
+      <MetadataSidebar
+        issue={issue}
+        labels={labels}
+        blocked_by={blocked_by}
+        onAddLabel={(l) => addLabel.mutate(l)}
+        onRemoveLabel={(l) => removeLabel.mutate(l)}
+      />
 
-      {dependencies.length > 0 && (
-        <div>
-          <h2 className="text-sm font-semibold text-stone-700 mb-2">dependencies</h2>
-          <ul className="space-y-1 text-sm">
-            {dependencies.map((d) => {
-              const inbound = d.depends_on_id === id;
-              const otherId = inbound ? d.issue_id : d.depends_on_id;
-              return (
-                <li key={`${d.issue_id}->${d.depends_on_id}-${d.type}`} className="font-mono text-stone-700">
-                  {inbound ? "← " : "→ "} <span className="text-stone-500">{d.type}</span>{" "}
-                  <Link to="/issue/$id" params={{ id: otherId }} className="text-blue-700 hover:underline">
-                    {otherId}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-
-      {comments.length > 0 && (
-        <div>
-          <h2 className="text-sm font-semibold text-stone-700 mb-2">comments</h2>
-          <ul className="space-y-3">
-            {comments.map((c) => (
-              <li key={c.id} className="border-l-2 border-stone-200 pl-3">
-                <div className="text-xs text-stone-500">
-                  {c.author} · {c.created_at ? new Date(c.created_at).toLocaleString() : ""}
-                </div>
-                <div className="text-sm text-stone-800 whitespace-pre-wrap">{c.text}</div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* TOC on xl+ screens */}
+      <div className="hidden xl:block w-56 p-6 pl-0">
+        <TableOfContents container={scrollRef.current} />
+      </div>
     </div>
   );
 }
 
-function Section({ title, body }: { title: string; body: string }) {
-  const html = useMemo(() => {
-    if (!body) return "";
-    const md = marked.parse(body, { async: false }) as string;
-    return DOMPurify.sanitize(md);
-  }, [body]);
+function Section({
+  title, body, attachmentBaseUrl, prefix,
+}: {
+  title: string; body: string;
+  attachmentBaseUrl?: string; prefix?: string;
+}) {
   if (!body) return null;
   return (
     <div>
-      <h2 className="text-sm font-semibold text-stone-700 mb-2">{title}</h2>
-      <div
-        className="prose prose-sm max-w-none prose-stone"
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <h2
+        id={slugify(title)}
+        className="text-[11px] uppercase font-semibold tracking-wider mb-2"
+        style={{ color: "var(--color-ink-tertiary)" }}
+      >
+        {title}
+      </h2>
+      <Markdown content={body} attachmentBaseUrl={attachmentBaseUrl} prefix={prefix} />
     </div>
   );
+}
+
+function Card({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-lg p-4"
+      style={{
+        background: "var(--color-bg-elevated)",
+        border: "1px solid var(--color-border-subtle)",
+        boxShadow: "var(--shadow-card)",
+      }}
+    >
+      <h3
+        className="text-[11px] uppercase font-semibold tracking-wider mb-3"
+        style={{ color: "var(--color-ink-tertiary)" }}
+      >
+        {label}
+      </h3>
+      {children}
+    </div>
+  );
+}
+
+function Comments({
+  issue, comments, attachmentBaseUrl, prefix, onAdd, submitting,
+}: {
+  issue: Issue; comments: Comment[];
+  attachmentBaseUrl?: string; prefix?: string;
+  onAdd: (text: string) => void; submitting: boolean;
+}) {
+  void issue;
+  const [text, setText] = useState("");
+  const submit = () => {
+    const t = text.trim();
+    if (!t) return;
+    onAdd(t);
+    setText("");
+  };
+  return (
+    <Card label={`Comments${comments.length ? ` (${comments.length})` : ""}`}>
+      {comments.length > 0 && (
+        <ul className="space-y-4 mb-4">
+          {comments.map((c) => (
+            <li key={c.id} className="flex gap-3">
+              <span
+                className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold"
+                style={{ background: getAvatarColor(c.author), color: "white" }}
+                title={c.author}
+              >
+                {getInitials(c.author)}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm font-semibold" style={{ color: "var(--color-ink-primary)" }}>
+                    {c.author || "anon"}
+                  </span>
+                  <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>
+                    {c.created_at ? new Date(c.created_at).toLocaleString() : ""}
+                  </span>
+                </div>
+                <Markdown content={c.text} attachmentBaseUrl={attachmentBaseUrl} prefix={prefix} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Add a comment… (Ctrl+Enter to submit)"
+        rows={3}
+        className="w-full p-2 text-sm rounded-md resize-y outline-none"
+        style={{
+          border: "1px solid var(--color-border-default)",
+          background: "var(--color-bg-base)",
+          color: "var(--color-ink-primary)",
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit();
+        }}
+      />
+      <div className="mt-2 flex justify-end">
+        <button
+          onClick={submit}
+          disabled={submitting || !text.trim()}
+          className="px-3 py-1.5 text-sm rounded-md font-medium"
+          style={{
+            background: "var(--color-bg-hover)",
+            color: "var(--color-ink-primary)",
+            border: "1px solid var(--color-border-default)",
+            opacity: submitting || !text.trim() ? 0.6 : 1,
+          }}
+        >
+          {submitting ? "Posting…" : "Add Comment"}
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function MetadataSidebar({
+  issue, labels, blocked_by, onAddLabel, onRemoveLabel,
+}: {
+  issue: Issue;
+  labels: string[];
+  blocked_by: { id: string; title: string }[];
+  onAddLabel: (l: string) => void;
+  onRemoveLabel: (l: string) => void;
+}) {
+  const [newLabel, setNewLabel] = useState("");
+  const submitLabel = () => {
+    const v = newLabel.trim();
+    if (!v) return;
+    onAddLabel(v);
+    setNewLabel("");
+  };
+  return (
+    <aside
+      className="shrink-0 p-4 space-y-3 overflow-y-auto"
+      style={{
+        width: 280,
+        borderLeft: "1px solid var(--color-border-subtle)",
+        background: "var(--color-bg-base)",
+      }}
+    >
+      <Meta label="Status">
+        <StatusBadge status={issue.status} />
+      </Meta>
+      {issue.status === "closed" && issue.close_reason && (
+        <Meta label="Close Reason">
+          <p className="text-sm" style={{ color: "var(--color-ink-secondary)" }}>
+            {issue.close_reason}
+          </p>
+        </Meta>
+      )}
+      <Meta label="Priority">
+        <PriorityBadge priority={issue.priority} />
+      </Meta>
+      <Meta label="Type">
+        <TypeBadge type={issue.issue_type} />
+      </Meta>
+      <Meta label="Assignee">
+        {issue.assignee ? (
+          <span className="flex items-center gap-2">
+            <span
+              className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
+              style={{ background: getAvatarColor(issue.assignee), color: "white" }}
+            >
+              {getInitials(issue.assignee)}
+            </span>
+            <span className="text-sm" style={{ color: "var(--color-ink-primary)" }}>
+              {issue.assignee}
+            </span>
+          </span>
+        ) : (
+          <span className="text-sm" style={{ color: "var(--color-ink-tertiary)" }}>Unassigned</span>
+        )}
+      </Meta>
+      {issue.due_at && (
+        <Meta label="Due">
+          <span className="text-sm" style={{ color: "var(--color-ink-secondary)" }}>
+            {new Date(issue.due_at).toLocaleDateString()}
+          </span>
+        </Meta>
+      )}
+      <Meta label="Updated">
+        <span className="text-sm" style={{ color: "var(--color-ink-secondary)" }}>
+          {issue.updated_at ? new Date(issue.updated_at).toLocaleDateString() : "—"}
+        </span>
+      </Meta>
+
+      <Meta label="Labels">
+        <div className="flex flex-wrap gap-1">
+          {labels.map((l) => (
+            <span
+              key={l}
+              className="px-2 py-0.5 text-xs rounded inline-flex items-center gap-1"
+              style={{ background: "var(--color-bg-hover)", color: "var(--color-ink-secondary)" }}
+            >
+              {l}
+              <button
+                onClick={() => onRemoveLabel(l)}
+                className="hover:opacity-70 leading-none"
+                title="remove"
+                style={{ color: "var(--color-ink-tertiary)" }}
+              >×</button>
+            </span>
+          ))}
+          {labels.length === 0 && (
+            <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>
+              No labels
+            </span>
+          )}
+        </div>
+        <input
+          value={newLabel}
+          onChange={(e) => setNewLabel(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submitLabel(); }}
+          placeholder="Add label…"
+          className="mt-2 w-full px-2 py-1 text-xs rounded outline-none"
+          style={{
+            border: "1px solid var(--color-border-default)",
+            background: "var(--color-bg-base)",
+            color: "var(--color-ink-primary)",
+          }}
+        />
+      </Meta>
+
+      {issue.parent_id && (
+        <Meta label="Parent">
+          <Link
+            to="/issue/$id"
+            params={{ id: issue.parent_id }}
+            className="block rounded px-1 py-1 -mx-1"
+          >
+            <span className="font-mono text-xs" style={{ color: "var(--color-ink-tertiary)" }}>
+              {issue.parent_id}
+            </span>
+            {issue.parent_title && (
+              <p className="text-xs leading-snug pl-0.5 line-clamp-2" style={{ color: "var(--color-ink-secondary)" }}>
+                {issue.parent_title}
+              </p>
+            )}
+          </Link>
+        </Meta>
+      )}
+
+      {issue.total_children > 0 && (
+        <Meta label={`Children (${issue.closed_children}/${issue.total_children})`}>
+          <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>
+            {issue.closed_children} of {issue.total_children} closed
+          </span>
+        </Meta>
+      )}
+
+      {blocked_by && blocked_by.length > 0 && (
+        <Meta label="Blocked By">
+          <div className="space-y-1">
+            {blocked_by.map((b) => (
+              <Link
+                key={b.id}
+                to="/issue/$id"
+                params={{ id: b.id }}
+                className="block text-xs font-mono"
+                style={{ color: "var(--color-accent)" }}
+                title={b.title}
+              >
+                {b.id}
+              </Link>
+            ))}
+          </div>
+        </Meta>
+      )}
+    </aside>
+  );
+}
+
+function Meta({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="px-3 py-2.5 rounded-md"
+      style={{ border: "1px solid var(--color-border-subtle)" }}
+    >
+      <h3
+        className="text-[11px] uppercase font-semibold tracking-wider mb-1.5"
+        style={{ color: "var(--color-ink-tertiary)" }}
+      >
+        {label}
+      </h3>
+      {children}
+    </div>
+  );
+}
+
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+function cssEsc(s: string): string {
+  if (typeof CSS !== "undefined" && (CSS as any).escape) return (CSS as any).escape(s);
+  return s.replace(/([^a-zA-Z0-9_-])/g, "\\$1");
 }
 
 export const Route = createFileRoute("/issue/$id")({ component: IssueDetail });

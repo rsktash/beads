@@ -124,6 +124,41 @@ export async function readyIssues(db) {
   return rows.map(rowToIssue);
 }
 
+// ---------- mutations (subset: comments + labels only) ----------
+
+export async function addComment(db, { id, issueId, author, text }) {
+  const now = new Date().toISOString();
+  await db.exec(
+    `INSERT INTO comments (id, issue_id, author, text, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [id, issueId, author, text, now],
+  );
+  return { id, issue_id: issueId, author, text, created_at: now };
+}
+
+export async function deleteComment(db, commentId) {
+  await db.exec('DELETE FROM comments WHERE id = ?', [commentId]);
+}
+
+export async function addLabel(db, issueId, label) {
+  // idempotent — re-adding the same (issue, label) is a no-op
+  try {
+    await db.exec(
+      'INSERT INTO labels (issue_id, label) VALUES (?, ?)',
+      [issueId, label],
+    );
+  } catch (err) {
+    if (!/UNIQUE|duplicate/i.test(String(err?.message))) throw err;
+  }
+}
+
+export async function removeLabel(db, issueId, label) {
+  await db.exec(
+    'DELETE FROM labels WHERE issue_id = ? AND label = ?',
+    [issueId, label],
+  );
+}
+
 export async function listProjects(db) {
   if (db.driver !== 'postgres') return [];
   const sql = `

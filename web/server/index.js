@@ -50,6 +50,8 @@ async function main() {
   app.route('/api/projects', projectsRouter({ db }));
 
   // /api/me — the client always pulls this on boot to know what to render.
+  // Bundles per-deployment config (file_attachment_base_url, version) so the
+  // client doesn't need a separate /api/config call.
   app.get('/api/me', async (c) => {
     const user = c.get('user') || { username: 'anon', role: 'Anonymous' };
     const prefix = (await getConfigValue(db, 'issue_prefix')) || '';
@@ -61,6 +63,8 @@ async function main() {
       auth_enabled: auth.enabled,
       auth_fingerprint: fingerprint(auth),
       bead_dir: beadDir,
+      version: process.env.npm_package_version || '0.0.0',
+      file_attachment_base_url: (process.env.FILE_ATTACHMENT_BASE_URL || '').replace(/\/$/, ''),
     });
   });
 

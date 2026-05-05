@@ -58,8 +58,22 @@ export const api = {
   },
   ready: () => call<{ issues: Issue[] }>("GET", "/api/issues/ready"),
   getIssue: (id: string) =>
-    call<{ issue: Issue; labels: string[]; dependencies: Dependency[]; comments: Comment[] }>(
-      "GET", `/api/issues/${encodeURIComponent(id)}`,
-    ),
+    call<{
+      issue: Issue;
+      labels: string[];
+      dependencies: Dependency[];
+      comments: Comment[];
+      blocked_by: { id: string; title: string }[];
+    }>("GET", `/api/issues/${encodeURIComponent(id)}`),
   listProjects: () => call<{ projects: { prefix: string }[] }>("GET", "/api/projects"),
+
+  // mutations
+  addComment: (issueId: string, text: string) =>
+    call<{ comment: Comment }>("POST", `/api/issues/${encodeURIComponent(issueId)}/comments`, { text }),
+  deleteComment: (issueId: string, commentId: string) =>
+    call<{ ok: true }>("DELETE", `/api/issues/${encodeURIComponent(issueId)}/comments/${encodeURIComponent(commentId)}`),
+  addLabel: (issueId: string, label: string) =>
+    call<{ ok: true; label: string }>("POST", `/api/issues/${encodeURIComponent(issueId)}/labels`, { label }),
+  removeLabel: (issueId: string, label: string) =>
+    call<{ ok: true }>("DELETE", `/api/issues/${encodeURIComponent(issueId)}/labels/${encodeURIComponent(label)}`),
 };

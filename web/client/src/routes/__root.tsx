@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "../lib/api";
 import { Layout } from "../components/Layout";
 import { Login } from "../components/Login";
+import { SearchDialog } from "../components/SearchDialog";
 
 function RootComponent() {
   const me = useQuery({ queryKey: ["me"], queryFn: api.me, retry: false });
@@ -45,6 +46,7 @@ function RootComponent() {
 
   return (
     <Layout>
+      <SearchDialog />
       <Outlet />
     </Layout>
   );
