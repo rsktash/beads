@@ -1,4 +1,5 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { Link as ProjectLink } from "../lib/router";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { api, writeToken } from "../lib/api";
@@ -51,15 +52,40 @@ const LogoIcon = () => (
   </svg>
 );
 
-function NavLink({
-  to,
-  label,
-  icon,
-}: {
-  to: string;
-  label: string;
-  icon: ReactNode;
-}) {
+const ChevronIcon = () => (
+  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="4 6 8 10 12 6" />
+  </svg>
+);
+
+// In-project board/list links use the ProjectLink shim (auto-prefixed). The
+// "Projects" link uses raw TanStack Link because it's outside-project.
+function ProjectNavLink({
+  to, label, icon,
+}: { to: string; label: string; icon: ReactNode }) {
+  return (
+    <ProjectLink
+      to={to}
+      className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors"
+      style={{ color: "var(--color-ink-secondary)" }}
+      activeProps={{
+        style: {
+          background: "var(--color-bg-hover)",
+          color: "var(--color-ink-primary)",
+          fontWeight: 500,
+        },
+      }}
+    >
+      {icon}
+      {label}
+    </ProjectLink>
+  );
+}
+
+function GlobalNavLink({
+  to, label, icon,
+}: { to: string; label: string; icon: ReactNode }) {
   return (
     <Link
       to={to as never}
@@ -79,8 +105,50 @@ function NavLink({
   );
 }
 
+// ProjectPicker is the dropdown that swaps which project the URL points at.
+// When there's only one project (or none), we render the prefix as a static
+// label.
+function ProjectPicker({
+  current, projects,
+}: {
+  current: string;
+  projects: { prefix: string }[];
+}) {
+  const navigate = useNavigate();
+  if (projects.length === 0) {
+    return (
+      <span className="text-xs font-mono" style={{ color: "var(--color-ink-tertiary)" }}>
+        {current || "—"}
+      </span>
+    );
+  }
+  return (
+    <select
+      value={current}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (!v) return;
+        navigate({ to: "/p/$prefix", params: { prefix: v } });
+      }}
+      className="w-full text-xs font-mono outline-none cursor-pointer rounded px-1 py-0.5"
+      style={{
+        background: "transparent",
+        color: "var(--color-ink-primary)",
+        border: "1px solid var(--color-border-subtle)",
+      }}
+    >
+      {!current && <option value="">— pick project —</option>}
+      {projects.map((p) => (
+        <option key={p.prefix} value={p.prefix}>{p.prefix}</option>
+      ))}
+    </select>
+  );
+}
+
 export function Layout({ children }: { children: ReactNode }) {
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const params = useParams({ strict: false }) as { prefix?: string };
+  const prefix = params.prefix || "";
 
   const onLogout = async () => {
     try { await api.logout(); } catch {}
@@ -88,7 +156,7 @@ export function Layout({ children }: { children: ReactNode }) {
     location.reload();
   };
 
-  const showProjects = me.data?.driver === "postgres";
+  const projects = me.data?.projects ?? [];
 
   return (
     <div className="flex h-screen" style={{ background: "var(--color-bg-base)" }}>
@@ -116,33 +184,39 @@ export function Layout({ children }: { children: ReactNode }) {
           </span>
         </div>
 
-        {/* project name */}
-        {me.data?.project.prefix && (
+        {/* project picker */}
+        <div
+          className="px-3 pb-3 mb-1"
+          style={{ borderBottom: "1px solid var(--color-border-subtle)" }}
+        >
           <div
-            className="px-4 pb-3 mb-1"
-            style={{ borderBottom: "1px solid var(--color-border-subtle)" }}
+            className="flex items-center gap-1 mb-1"
+            style={{ color: "var(--color-ink-tertiary)" }}
           >
-            <span
-              className="text-xs font-mono"
-              style={{ color: "var(--color-ink-tertiary)" }}
-            >
-              {me.data.project.prefix}
-            </span>
-            <span
-              className="ml-2 text-[10px]"
-              style={{ color: "var(--color-ink-tertiary)", opacity: 0.7 }}
-            >
-              ({me.data.driver})
-            </span>
+            <span className="text-[10px] uppercase tracking-wider">project</span>
+            <ChevronIcon />
+          </div>
+          <ProjectPicker current={prefix} projects={projects} />
+          <Link
+            to="/projects"
+            className="block mt-1 text-[10px]"
+            style={{ color: "var(--color-ink-tertiary)" }}
+          >
+            All projects →
+          </Link>
+        </div>
+
+        {/* nav (only when a project is active) */}
+        {prefix ? (
+          <div className="px-2 space-y-0.5">
+            <ProjectNavLink to="" label="Board" icon={<BoardIcon />} />
+            <ProjectNavLink to="/list" label="List" icon={<ListIcon />} />
+          </div>
+        ) : (
+          <div className="px-2 space-y-0.5">
+            <GlobalNavLink to="/projects" label="Projects" icon={<ProjectsIcon />} />
           </div>
         )}
-
-        {/* nav */}
-        <div className="px-2 space-y-0.5">
-          <NavLink to="/" label="Board" icon={<BoardIcon />} />
-          <NavLink to="/list" label="List" icon={<ListIcon />} />
-          {showProjects && <NavLink to="/projects" label="Projects" icon={<ProjectsIcon />} />}
-        </div>
 
         <div className="flex-1" />
 
@@ -171,9 +245,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 {me.data.user.username}
               </div>
               {me.data.user.role !== "Anonymous" && (
-                <div
-                  style={{ fontSize: 11, color: "var(--color-ink-tertiary)" }}
-                >
+                <div style={{ fontSize: 11, color: "var(--color-ink-tertiary)" }}>
                   {me.data.user.role}
                 </div>
               )}

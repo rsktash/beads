@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link } from "../lib/router";
 import type { Issue } from "../lib/types";
 import { PriorityBadge, TypeBadge, typeBorderColor } from "./badges";
 import { CopyId } from "./CopyId";
@@ -19,7 +19,6 @@ export function IssueCard({
   dimmed?: boolean;
 }) {
   const borderColor = typeBorderColor(issue.issue_type);
-
   return (
     <Link
       to="/issue/$id"

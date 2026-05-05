@@ -10,18 +10,15 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProjectsRouteImport } from './routes/projects'
-import { Route as ListRouteImport } from './routes/list'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as IssueIdRouteImport } from './routes/issue.$id'
+import { Route as PPrefixRouteImport } from './routes/p.$prefix'
+import { Route as PPrefixIndexRouteImport } from './routes/p.$prefix.index'
+import { Route as PPrefixListRouteImport } from './routes/p.$prefix.list'
+import { Route as PPrefixIssueIdRouteImport } from './routes/p.$prefix.issue.$id'
 
 const ProjectsRoute = ProjectsRouteImport.update({
   id: '/projects',
   path: '/projects',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ListRoute = ListRouteImport.update({
-  id: '/list',
-  path: '/list',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -29,44 +26,81 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IssueIdRoute = IssueIdRouteImport.update({
+const PPrefixRoute = PPrefixRouteImport.update({
+  id: '/p/$prefix',
+  path: '/p/$prefix',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PPrefixIndexRoute = PPrefixIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PPrefixRoute,
+} as any)
+const PPrefixListRoute = PPrefixListRouteImport.update({
+  id: '/list',
+  path: '/list',
+  getParentRoute: () => PPrefixRoute,
+} as any)
+const PPrefixIssueIdRoute = PPrefixIssueIdRouteImport.update({
   id: '/issue/$id',
   path: '/issue/$id',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => PPrefixRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/list': typeof ListRoute
   '/projects': typeof ProjectsRoute
-  '/issue/$id': typeof IssueIdRoute
+  '/p/$prefix': typeof PPrefixRouteWithChildren
+  '/p/$prefix/list': typeof PPrefixListRoute
+  '/p/$prefix/': typeof PPrefixIndexRoute
+  '/p/$prefix/issue/$id': typeof PPrefixIssueIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/list': typeof ListRoute
   '/projects': typeof ProjectsRoute
-  '/issue/$id': typeof IssueIdRoute
+  '/p/$prefix/list': typeof PPrefixListRoute
+  '/p/$prefix': typeof PPrefixIndexRoute
+  '/p/$prefix/issue/$id': typeof PPrefixIssueIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/list': typeof ListRoute
   '/projects': typeof ProjectsRoute
-  '/issue/$id': typeof IssueIdRoute
+  '/p/$prefix': typeof PPrefixRouteWithChildren
+  '/p/$prefix/list': typeof PPrefixListRoute
+  '/p/$prefix/': typeof PPrefixIndexRoute
+  '/p/$prefix/issue/$id': typeof PPrefixIssueIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/list' | '/projects' | '/issue/$id'
+  fullPaths:
+    | '/'
+    | '/projects'
+    | '/p/$prefix'
+    | '/p/$prefix/list'
+    | '/p/$prefix/'
+    | '/p/$prefix/issue/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/list' | '/projects' | '/issue/$id'
-  id: '__root__' | '/' | '/list' | '/projects' | '/issue/$id'
+  to:
+    | '/'
+    | '/projects'
+    | '/p/$prefix/list'
+    | '/p/$prefix'
+    | '/p/$prefix/issue/$id'
+  id:
+    | '__root__'
+    | '/'
+    | '/projects'
+    | '/p/$prefix'
+    | '/p/$prefix/list'
+    | '/p/$prefix/'
+    | '/p/$prefix/issue/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ListRoute: typeof ListRoute
   ProjectsRoute: typeof ProjectsRoute
-  IssueIdRoute: typeof IssueIdRoute
+  PPrefixRoute: typeof PPrefixRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -78,13 +112,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/list': {
-      id: '/list'
-      path: '/list'
-      fullPath: '/list'
-      preLoaderRoute: typeof ListRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -92,21 +119,56 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/issue/$id': {
-      id: '/issue/$id'
-      path: '/issue/$id'
-      fullPath: '/issue/$id'
-      preLoaderRoute: typeof IssueIdRouteImport
+    '/p/$prefix': {
+      id: '/p/$prefix'
+      path: '/p/$prefix'
+      fullPath: '/p/$prefix'
+      preLoaderRoute: typeof PPrefixRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/p/$prefix/': {
+      id: '/p/$prefix/'
+      path: '/'
+      fullPath: '/p/$prefix/'
+      preLoaderRoute: typeof PPrefixIndexRouteImport
+      parentRoute: typeof PPrefixRoute
+    }
+    '/p/$prefix/list': {
+      id: '/p/$prefix/list'
+      path: '/list'
+      fullPath: '/p/$prefix/list'
+      preLoaderRoute: typeof PPrefixListRouteImport
+      parentRoute: typeof PPrefixRoute
+    }
+    '/p/$prefix/issue/$id': {
+      id: '/p/$prefix/issue/$id'
+      path: '/issue/$id'
+      fullPath: '/p/$prefix/issue/$id'
+      preLoaderRoute: typeof PPrefixIssueIdRouteImport
+      parentRoute: typeof PPrefixRoute
     }
   }
 }
 
+interface PPrefixRouteChildren {
+  PPrefixListRoute: typeof PPrefixListRoute
+  PPrefixIndexRoute: typeof PPrefixIndexRoute
+  PPrefixIssueIdRoute: typeof PPrefixIssueIdRoute
+}
+
+const PPrefixRouteChildren: PPrefixRouteChildren = {
+  PPrefixListRoute: PPrefixListRoute,
+  PPrefixIndexRoute: PPrefixIndexRoute,
+  PPrefixIssueIdRoute: PPrefixIssueIdRoute,
+}
+
+const PPrefixRouteWithChildren =
+  PPrefixRoute._addFileChildren(PPrefixRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ListRoute: ListRoute,
   ProjectsRoute: ProjectsRoute,
-  IssueIdRoute: IssueIdRoute,
+  PPrefixRoute: PPrefixRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

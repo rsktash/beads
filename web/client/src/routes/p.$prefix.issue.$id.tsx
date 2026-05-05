@@ -1,7 +1,8 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { Link } from "../lib/router";
 import type { Comment, Issue } from "../lib/types";
 import { PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
 import { CopyId } from "../components/CopyId";
@@ -112,17 +113,13 @@ function IssueDetail() {
         </h1>
 
         <Section title="Description" body={issue.description}
-                 attachmentBaseUrl={me.data?.file_attachment_base_url}
-                 prefix={me.data?.project.prefix} />
+                 attachmentBaseUrl={me.data?.file_attachment_base_url} />
         <Section title="Acceptance Criteria" body={issue.acceptance_criteria}
-                 attachmentBaseUrl={me.data?.file_attachment_base_url}
-                 prefix={me.data?.project.prefix} />
+                 attachmentBaseUrl={me.data?.file_attachment_base_url} />
         <Section title="Notes" body={issue.notes}
-                 attachmentBaseUrl={me.data?.file_attachment_base_url}
-                 prefix={me.data?.project.prefix} />
+                 attachmentBaseUrl={me.data?.file_attachment_base_url} />
         <Section title="Design" body={issue.design}
-                 attachmentBaseUrl={me.data?.file_attachment_base_url}
-                 prefix={me.data?.project.prefix} />
+                 attachmentBaseUrl={me.data?.file_attachment_base_url} />
 
         {/* dependencies (full list — different from sidebar's blocked-by) */}
         {dependencies.length > 0 && (
@@ -154,7 +151,6 @@ function IssueDetail() {
           issue={issue}
           comments={comments}
           attachmentBaseUrl={me.data?.file_attachment_base_url}
-          prefix={me.data?.project.prefix}
           onAdd={(text) => addComment.mutate(text)}
           submitting={addComment.isPending}
         />
@@ -174,11 +170,12 @@ function IssueDetail() {
 }
 
 function Section({
-  title, body, attachmentBaseUrl, prefix,
+  title, body, attachmentBaseUrl,
 }: {
   title: string; body: string;
-  attachmentBaseUrl?: string; prefix?: string;
+  attachmentBaseUrl?: string;
 }) {
+  const { prefix } = useParams({ strict: false }) as { prefix?: string };
   if (!body) return null;
   return (
     <div>
@@ -216,13 +213,14 @@ function Card({ label, children }: { label: string; children: React.ReactNode })
 }
 
 function Comments({
-  issue, comments, attachmentBaseUrl, prefix, onAdd, submitting,
+  issue, comments, attachmentBaseUrl, onAdd, submitting,
 }: {
   issue: Issue; comments: Comment[];
-  attachmentBaseUrl?: string; prefix?: string;
+  attachmentBaseUrl?: string;
   onAdd: (text: string) => void; submitting: boolean;
 }) {
   void issue;
+  const { prefix } = useParams({ strict: false }) as { prefix?: string };
   const [text, setText] = useState("");
   const submit = () => {
     const t = text.trim();
@@ -502,4 +500,4 @@ function cssEsc(s: string): string {
   return s.replace(/([^a-zA-Z0-9_-])/g, "\\$1");
 }
 
-export const Route = createFileRoute("/issue/$id")({ component: IssueDetail });
+export const Route = createFileRoute("/p/$prefix/issue/$id")({ component: IssueDetail });

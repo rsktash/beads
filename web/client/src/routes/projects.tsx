@@ -1,41 +1,48 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 
-// "/projects" — only meaningful on a shared postgres. Lists every schema in
-// the database that contains a `config` table (i.e. a beads project).
 function ProjectsComponent() {
-  const me = useQuery({ queryKey: ["me"], queryFn: api.me });
-  const q = useQuery({
-    queryKey: ["projects"],
-    queryFn: api.listProjects,
-    enabled: me.data?.driver === "postgres",
-  });
+  const q = useQuery({ queryKey: ["projects"], queryFn: api.listProjects });
 
-  if (me.data?.driver !== "postgres") {
-    return (
-      <div className="text-stone-600">
-        Multi-project listing is only available on postgres backends.
-        This workspace is using <span className="font-mono">{me.data?.driver}</span>.
-      </div>
-    );
-  }
+  if (q.isLoading) return <div style={{ color: "var(--color-ink-tertiary)" }}>loading…</div>;
+  if (q.error)     return <div className="text-red-600">{(q.error as Error).message}</div>;
+
+  const projects = q.data?.projects ?? [];
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold text-stone-900">projects</h1>
-      <ul className="bg-white border border-stone-200 rounded-lg divide-y divide-stone-200">
-        {q.data?.projects.map((p) => (
-          <li key={p.prefix} className="px-4 py-2 flex items-center">
-            <span className="font-mono text-sm text-stone-900">{p.prefix}</span>
-            <span className="ml-auto text-xs text-stone-500">
-              switch by setting <span className="font-mono">search_path={p.prefix}</span> in .bd/config
-            </span>
+    <div className="space-y-4 max-w-xl">
+      <div>
+        <h1 className="text-xl font-bold" style={{ color: "var(--color-ink-primary)" }}>
+          Projects
+        </h1>
+        <p className="text-sm mt-0.5" style={{ color: "var(--color-ink-tertiary)" }}>
+          {projects.length === 0
+            ? "No projects yet — run `bd init --prefix <name>` to create one."
+            : `Pick a project to enter.`}
+        </p>
+      </div>
+      <ul
+        className="rounded-lg divide-y"
+        style={{
+          background: "var(--color-bg-elevated)",
+          border: "1px solid var(--color-border-subtle)",
+          // @ts-expect-error CSS var for divide colour
+          "--tw-divide-opacity": 1,
+        }}
+      >
+        {projects.map((p) => (
+          <li key={p.prefix}>
+            <Link
+              to="/p/$prefix"
+              params={{ prefix: p.prefix }}
+              className="block px-4 py-3 hover:bg-stone-50 transition-colors"
+              style={{ color: "var(--color-ink-primary)" }}
+            >
+              <span className="font-mono text-sm">{p.prefix}</span>
+            </Link>
           </li>
         ))}
-        {q.data?.projects.length === 0 && (
-          <li className="px-4 py-2 text-stone-500">no projects found</li>
-        )}
       </ul>
     </div>
   );

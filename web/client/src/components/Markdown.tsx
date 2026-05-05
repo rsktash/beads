@@ -59,7 +59,7 @@ function render(content: string, attachBase: string, prefix: string): string {
   // lookbehind/lookahead avoids URLs and existing href values).
   if (prefix) {
     const re = new RegExp(`(^|[\\s(\\[])#(${escapeRegex(prefix)}-[a-z0-9]+(?:\\.\\d+)*)(?=$|[\\s.,:;)\\]?!])`, "g");
-    raw = raw.replace(re, (_m, lead, id) => `${lead}<a href="/issue/${id}">#${id}</a>`);
+    raw = raw.replace(re, (_m, lead, id) => `${lead}<a href="/p/${prefix}/issue/${id}">#${id}</a>`);
   }
 
   return DOMPurify.sanitize(raw, {

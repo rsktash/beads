@@ -15,11 +15,14 @@ import {
   removeLabel,
 } from '../queries.js';
 
-export function issuesRouter(deps) {
-  const { db } = deps;
+// Reads the per-request project db from c.get('db'). Set by the project-
+// scope middleware in index.js. No db is captured at registration time so
+// the same router serves every project.
+export function issuesRouter() {
   const r = new Hono();
 
   r.get('/', async (c) => {
+    const db = c.get('db');
     const q = c.req.query();
     const limit = q.limit ? Number(q.limit) : 0;
     const issues = await listIssues(db, q, limit);
@@ -27,11 +30,13 @@ export function issuesRouter(deps) {
   });
 
   r.get('/ready', async (c) => {
+    const db = c.get('db');
     const issues = await readyIssues(db);
     return c.json({ issues });
   });
 
   r.get('/:id', async (c) => {
+    const db = c.get('db');
     const id = c.req.param('id');
     const issue = await getIssue(db, id);
     if (!issue) return c.json({ error: 'not found' }, 404);
@@ -49,8 +54,8 @@ export function issuesRouter(deps) {
     });
   });
 
-  // ---------- comments ----------
   r.post('/:id/comments', async (c) => {
+    const db = c.get('db');
     const issueId = c.req.param('id');
     const body = await c.req.json().catch(() => ({}));
     const text = String(body.text || '').trim();
@@ -66,12 +71,13 @@ export function issuesRouter(deps) {
   });
 
   r.delete('/:id/comments/:commentId', async (c) => {
+    const db = c.get('db');
     await deleteComment(db, c.req.param('commentId'));
     return c.json({ ok: true });
   });
 
-  // ---------- labels ----------
   r.post('/:id/labels', async (c) => {
+    const db = c.get('db');
     const issueId = c.req.param('id');
     const body = await c.req.json().catch(() => ({}));
     const label = String(body.label || '').trim();
@@ -81,6 +87,7 @@ export function issuesRouter(deps) {
   });
 
   r.delete('/:id/labels/:label', async (c) => {
+    const db = c.get('db');
     await removeLabel(db, c.req.param('id'), c.req.param('label'));
     return c.json({ ok: true });
   });

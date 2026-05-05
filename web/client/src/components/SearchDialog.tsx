@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { useNavigate } from "../lib/router";
 import { PriorityBadge, StatusBadge, TypeBadge } from "./badges";
 
-// Cmd+K / Ctrl+K opens a fuzzy search palette. Loads /api/issues once and
-// scores client-side — adequate up to a few thousand issues.
+// Cmd+K / Ctrl+K opens a fuzzy search palette scoped to the active project.
+// Disabled outside of /p/$prefix routes.
 export function SearchDialog() {
+  // Read prefix only to gate query enablement and keys; navigation goes
+  // through the project-scoped useNavigate shim and doesn't need it.
+  const params = useParams({ strict: false }) as { prefix?: string };
+  const prefix = params.prefix || "";
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
@@ -36,9 +41,9 @@ export function SearchDialog() {
   }, [open]);
 
   const all = useQuery({
-    queryKey: ["issues", "search-all"],
+    queryKey: ["issues", prefix, "search-all"],
     queryFn: () => api.listIssues({}),
-    enabled: open,
+    enabled: open && !!prefix,
   });
 
   const matches = useMemo(() => {

@@ -1,7 +1,8 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { api } from "../lib/api";
+import { Link } from "../lib/router";
 import { PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
 import { CopyId } from "../components/CopyId";
 import { getAvatarColor, getInitials } from "../lib/avatar";
@@ -107,8 +108,9 @@ function ListComponent() {
   if (status) params.status = status;
   if (type) params.type = type;
 
+  const { prefix } = Route.useParams();
   const q = useQuery({
-    queryKey: ["issues", params],
+    queryKey: ["issues", prefix, params],
     queryFn: () => api.listIssues(params),
     refetchInterval: 5000,
   });
@@ -241,4 +243,4 @@ function Td({ children }: { children: React.ReactNode }) {
   return <td className="px-3 py-2">{children}</td>;
 }
 
-export const Route = createFileRoute("/list")({ component: ListComponent });
+export const Route = createFileRoute("/p/$prefix/list")({ component: ListComponent });

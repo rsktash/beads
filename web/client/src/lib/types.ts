@@ -85,9 +85,9 @@ export interface Comment {
 }
 
 export interface Me {
-  project: { prefix: string; id_mode: "hash" | "counter" | string };
   user: { username: string; role: string };
   driver: "sqlite" | "postgres";
+  projects: { prefix: string; id_mode: "hash" | "counter" | string }[];
   auth_enabled: boolean;
   auth_fingerprint: string;
   bead_dir: string;
