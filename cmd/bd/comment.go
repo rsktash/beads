@@ -10,7 +10,11 @@ import (
 
 func newCommentCmd() *cobra.Command {
 	var author string
-	root := &cobra.Command{Use: "comment", Short: "Comment on a bead"}
+	root := &cobra.Command{
+		Use:     "comment",
+		Aliases: []string{"comments"},
+		Short:   "Comment on a bead",
+	}
 	add := &cobra.Command{
 		Use: "add <id> <text>", Short: "Add a comment", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

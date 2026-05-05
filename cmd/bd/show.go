@@ -37,11 +37,19 @@ func newShowCmd() *cobra.Command {
 				return err
 			}
 			if cc.json {
-				return writeJSON(struct {
-					Issue        any `json:"issue"`
+				// Return [issue] (array of one) with deps + comments embedded
+				// as fields. Lets skills do `bd show $id --json | jq -r
+				// '.[0].<field>'`, matching upstream's shape.
+				type withChildren struct {
+					*beadsIssueAlias
 					Dependencies any `json:"dependencies"`
 					Comments     any `json:"comments"`
-				}{i, deps, comments})
+				}
+				return writeJSON([]withChildren{{
+					beadsIssueAlias: (*beadsIssueAlias)(i),
+					Dependencies:    deps,
+					Comments:        comments,
+				}})
 			}
 			fmt.Printf("%s  [%s] %s p%d %s\n", i.ID, i.Status, i.Type, i.Priority, i.Title)
 			if i.Assignee != "" {

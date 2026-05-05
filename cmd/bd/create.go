@@ -21,6 +21,7 @@ func newCreateCmd() *cobra.Command {
 		dueStr, deferStr            string
 		ephemeral                   bool
 		sender                      string
+		parentID                    string
 	)
 	cmd := &cobra.Command{
 		Use:   "create <title>",
@@ -77,8 +78,31 @@ func newCreateCmd() *cobra.Command {
 				Ephemeral:          ephemeral,
 				Sender:             sender,
 			}
+			// --parent: allocate a hierarchical id "<parent>.N" via the
+			// child_counters table (atomic) and auto-add the parent-child
+			// dependency. Mirrors upstream's behaviour.
+			if parentID != "" {
+				if _, err := cc.store.GetIssue(cc.ctx, parentID); err != nil {
+					return fmt.Errorf("parent %s: %w", parentID, err)
+				}
+				childID, err := cc.store.NextChildID(cc.ctx, parentID)
+				if err != nil {
+					return fmt.Errorf("alloc child id under %s: %w", parentID, err)
+				}
+				i.ID = childID
+			}
 			if err := cc.store.CreateIssue(cc.ctx, i); err != nil {
 				return err
+			}
+			if parentID != "" {
+				if err := cc.store.AddDependency(cc.ctx, beads.Dependency{
+					IssueID:     i.ID,
+					DependsOnID: parentID,
+					Type:        beads.DepParentChild,
+					CreatedBy:   assigneeFromEnv(),
+				}); err != nil {
+					return fmt.Errorf("link parent-child %s -> %s: %w", i.ID, parentID, err)
+				}
 			}
 			for _, l := range labels {
 				if err := cc.store.AddLabel(cc.ctx, i.ID, l); err != nil {
@@ -108,6 +132,7 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&deferStr, "defer", "", "defer-until RFC3339 timestamp (excludes from `ready`)")
 	cmd.Flags().BoolVar(&ephemeral, "ephemeral", false, "ephemeral bead (excluded from ready)")
 	cmd.Flags().StringVar(&sender, "sender", "", "sender (for message beads)")
+	cmd.Flags().StringVar(&parentID, "parent", "", "create as a child of this issue (allocates hierarchical id `<parent>.N` and links via parent-child)")
 	return cmd
 }
 
