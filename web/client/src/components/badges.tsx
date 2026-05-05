@@ -1,17 +1,21 @@
 import type { Issue, Status } from "../lib/types";
 
-// Color tokens come from @theme in src/index.css (Solarized Light) so badges
-// match upstream beads-ui exactly. We render plain colored chips with the
-// label inline; no emoji / icons.
+// Visual style mirrors upstream beads-ui — small monospace pills, subdued
+// background tint matched to a foreground colour from the @theme tokens
+// (Solarized Light). color-mix gives consistent translucent bgs without
+// hand-rolling rgba per token.
 
 export function StatusBadge({ status }: { status: Status | string }) {
-  const color = statusColor(status);
+  const tone = statusColor(status);
   return (
     <span
-      className="text-xs rounded-sm px-1.5 py-0.5 font-mono"
-      style={{ background: color.bg, color: color.fg }}
+      className="text-[11px] rounded px-1.5 py-0.5 font-mono"
+      style={{
+        background: `color-mix(in srgb, ${tone} 14%, transparent)`,
+        color: tone,
+      }}
     >
-      {status}
+      {labelStatus(status)}
     </span>
   );
 }
@@ -20,10 +24,13 @@ export function PriorityBadge({ priority }: { priority: number }) {
   const c = priorityColor(priority);
   return (
     <span
-      className="text-xs rounded-sm px-1.5 py-0.5 font-mono"
-      style={{ background: c, color: "#fdf6e3" }}
+      className="text-[11px] rounded px-1.5 py-0.5 font-mono"
+      style={{
+        background: `color-mix(in srgb, ${c} 14%, transparent)`,
+        color: c,
+      }}
     >
-      p{priority}
+      P{priority}
     </span>
   );
 }
@@ -32,8 +39,11 @@ export function TypeBadge({ type }: { type: Issue["issue_type"] }) {
   const c = typeColor(type);
   return (
     <span
-      className="text-xs rounded-sm px-1.5 py-0.5 font-mono"
-      style={{ background: alpha(c, 0.14), color: c }}
+      className="text-[11px] rounded px-1.5 py-0.5 font-mono"
+      style={{
+        background: `color-mix(in srgb, ${c} 14%, transparent)`,
+        color: c,
+      }}
     >
       {type}
     </span>
@@ -41,25 +51,22 @@ export function TypeBadge({ type }: { type: Issue["issue_type"] }) {
 }
 
 function statusColor(s: string) {
-  const tone = (() => {
-    switch (s) {
-      case "open":         return "var(--color-status-open)";
-      case "in_progress":  return "var(--color-status-in-progress)";
-      case "blocked":      return "var(--color-status-blocked)";
-      case "closed":       return "var(--color-status-closed)";
-      case "pinned":       return "var(--color-status-pinned)";
-      default:             return "var(--color-ink-tertiary)";
-    }
-  })();
-  return { bg: `color-mix(in srgb, ${tone} 14%, transparent)`, fg: tone };
+  switch (s) {
+    case "open":         return "var(--color-status-open)";
+    case "in_progress":  return "var(--color-status-in-progress)";
+    case "blocked":      return "var(--color-status-blocked)";
+    case "closed":       return "var(--color-status-closed)";
+    case "pinned":       return "var(--color-status-pinned)";
+    default:             return "var(--color-ink-tertiary)";
+  }
 }
 
 function priorityColor(p: number) {
   switch (p) {
-    case 0: return "var(--color-priority-0)";
-    case 1: return "var(--color-priority-1)";
-    case 2: return "var(--color-priority-2)";
-    case 3: return "var(--color-priority-3)";
+    case 0:  return "var(--color-priority-0)";
+    case 1:  return "var(--color-priority-1)";
+    case 2:  return "var(--color-priority-2)";
+    case 3:  return "var(--color-priority-3)";
     default: return "var(--color-priority-4)";
   }
 }
@@ -75,8 +82,26 @@ function typeColor(t: string) {
   }
 }
 
-// alpha is a CSS-side helper for fallback browsers that don't support
-// color-mix(); kept here in case we need a JS-derived rgba later.
-function alpha(_color: string, _a: number) {
-  return `color-mix(in srgb, ${_color} ${Math.round(_a * 100)}%, transparent)`;
+function labelStatus(s: string): string {
+  if (s === "in_progress") return "in progress";
+  return s;
+}
+
+// TYPE_BORDER_COLORS is the strong opaque variant used as the IssueCard
+// left-edge accent (3px solid border) — same hues as upstream beads-ui.
+export const TYPE_BORDER_COLORS: Record<string, string> = {
+  epic:    "#7C3AED",
+  feature: "#6366F1",
+  bug:     "#EF4444",
+  task:    "#16A34A",
+  chore:   "#78716C",
+  message: "#0EA5E9",
+  wisp:    "#F59E0B",
+  molecule: "#10B981",
+  role:    "#A855F7",
+  event:   "#06B6D4",
+};
+
+export function typeBorderColor(t: string): string {
+  return TYPE_BORDER_COLORS[t] ?? "#78716C";
 }

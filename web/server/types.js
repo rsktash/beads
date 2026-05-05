@@ -42,6 +42,14 @@ export function rowToIssue(r) {
     payload: r.payload || '',
     due_at: toISO(r.due_at),
     defer_until: toISO(r.defer_until),
+    // Enriched fields populated by ENRICHED SELECT (queries.js). Optional —
+    // detail/list endpoints set them; raw inserts won't have them.
+    parent_id: r.parent_id || '',
+    parent_title: r.parent_title || '',
+    total_children: r.total_children != null ? Number(r.total_children) : 0,
+    closed_children: r.closed_children != null ? Number(r.closed_children) : 0,
+    blocked_by_count: r.blocked_by_count != null ? Number(r.blocked_by_count) : 0,
+    comment_count: r.comment_count != null ? Number(r.comment_count) : 0,
   };
 }
 

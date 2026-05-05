@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import {
   getIssue,
+  listBlockedBy,
   listComments,
   listDependencies,
   listIssues,
@@ -28,12 +29,13 @@ export function issuesRouter(deps) {
     const id = c.req.param('id');
     const issue = await getIssue(db, id);
     if (!issue) return c.json({ error: 'not found' }, 404);
-    const [labels, deps, comments] = await Promise.all([
+    const [labels, deps, comments, blockedBy] = await Promise.all([
       listLabels(db, id),
       listDependencies(db, id),
       listComments(db, id),
+      listBlockedBy(db, id, 5),
     ]);
-    return c.json({ issue, labels, dependencies: deps, comments });
+    return c.json({ issue, labels, dependencies: deps, comments, blocked_by: blockedBy });
   });
 
   return r;

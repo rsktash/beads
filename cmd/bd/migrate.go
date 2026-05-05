@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
@@ -32,6 +34,19 @@ func migrateSourcePassword() string {
 		}
 	}
 	return ""
+}
+
+// ensureParseTime appends parseTime=true so the driver returns DATETIME
+// columns as time.Time (otherwise they come back as raw bytes).
+func ensureParseTime(dsn string) string {
+	if strings.Contains(dsn, "parseTime=") {
+		return dsn
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "parseTime=true"
 }
 
 // injectMysqlPassword adds password into a `user@tcp(host)/db` MySQL DSN if
@@ -82,6 +97,7 @@ func newMigrateCmd() *cobra.Command {
 			defer cc.store.Close()
 
 			from := injectMysqlPassword(from, migrateSourcePassword())
+			from = ensureParseTime(from)
 			src, err := sql.Open("mysql", from)
 			if err != nil {
 				return fmt.Errorf("open source: %w", err)
@@ -172,72 +188,77 @@ func (m *migrator) copyConfig(ctx context.Context) error {
 	return rows.Err()
 }
 
-// upstreamIssueCols enumerates only the columns we persist. Upstream has
-// more (await/hook/agent/compaction/no_history/work_type) and they're
-// dropped here per project scope.
-const upstreamIssueCols = `id, COALESCE(content_hash,''), title, COALESCE(description,''),
-COALESCE(design,''), COALESCE(acceptance_criteria,''), COALESCE(notes,''),
-COALESCE(status,'open'), COALESCE(priority,2), COALESCE(issue_type,'task'),
-COALESCE(assignee,''), COALESCE(estimated_minutes,0),
-created_at, COALESCE(created_by,''), COALESCE(owner,''),
-updated_at, started_at, closed_at, COALESCE(closed_by_session,''),
-COALESCE(external_ref,''), COALESCE(spec_id,''), COALESCE(CAST(metadata AS CHAR),'{}'),
-COALESCE(source_repo,''), COALESCE(source_system,''), COALESCE(close_reason,''),
-COALESCE(sender,''), COALESCE(ephemeral,0), COALESCE(pinned,0), COALESCE(is_template,0),
-COALESCE(wisp_type,''), COALESCE(mol_type,''), COALESCE(role_type,''),
-COALESCE(event_kind,''), COALESCE(actor,''), COALESCE(target,''), COALESCE(payload,''),
-due_at, defer_until`
-
+// copyIssuesFromTable does `SELECT *` and reads each row by column name.
+// This tolerates upstream schema drift — e.g. older Dolt instances that
+// don't have role_type, no_history, await_* etc. — by treating missing
+// columns as their default value.
 func (m *migrator) copyIssuesFromTable(ctx context.Context, table string, forceEphemeral bool) error {
-	q := "SELECT " + upstreamIssueCols + " FROM " + table
-	rows, err := m.src.QueryContext(ctx, q)
+	rows, err := m.src.QueryContext(ctx, "SELECT * FROM "+table)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+
 	for rows.Next() {
-		var (
-			i                                              beads.Issue
-			statusS, typeS                                 string
-			ephemeral, pinned, isTemplate                  int
-			startedAt, closedAt, dueAt, deferUntil         sql.NullTime
-		)
-		if err := rows.Scan(
-			&i.ID, &i.ContentHash, &i.Title, &i.Description, &i.Design,
-			&i.AcceptanceCriteria, &i.Notes,
-			&statusS, &i.Priority, &typeS, &i.Assignee, &i.EstimatedMinutes,
-			&i.CreatedAt, &i.CreatedBy, &i.Owner,
-			&i.UpdatedAt, &startedAt, &closedAt, &i.ClosedBySession,
-			&i.ExternalRef, &i.SpecID, &i.Metadata,
-			&i.SourceRepo, &i.SourceSystem, &i.CloseReason,
-			&i.Sender, &ephemeral, &pinned, &isTemplate,
-			&i.WispType, &i.MolType, &i.RoleType,
-			&i.EventKind, &i.Actor, &i.Target, &i.Payload,
-			&dueAt, &deferUntil,
-		); err != nil {
+		raw := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range raw {
+			ptrs[i] = &raw[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
 			return err
 		}
-		i.Status = beads.Status(statusS)
-		i.Type = beads.IssueType(typeS)
-		i.Ephemeral = ephemeral != 0 || forceEphemeral
-		i.Pinned = pinned != 0
-		i.IsTemplate = isTemplate != 0
-		if startedAt.Valid {
-			t := startedAt.Time
-			i.StartedAt = &t
+		row := make(map[string]any, len(cols))
+		for i, name := range cols {
+			row[name] = raw[i]
 		}
-		if closedAt.Valid {
-			t := closedAt.Time
-			i.ClosedAt = &t
+
+		i := beads.Issue{
+			ID:                 asString(row["id"]),
+			ContentHash:        asString(row["content_hash"]),
+			Title:              asString(row["title"]),
+			Description:        asString(row["description"]),
+			Design:             asString(row["design"]),
+			AcceptanceCriteria: asString(row["acceptance_criteria"]),
+			Notes:              asString(row["notes"]),
+			Status:             beads.Status(strDefault(row["status"], "open")),
+			Priority:           asInt(row["priority"], 2),
+			Type:               beads.IssueType(strDefault(row["issue_type"], "task")),
+			Assignee:           asString(row["assignee"]),
+			EstimatedMinutes:   asInt(row["estimated_minutes"], 0),
+			CreatedAt:          asTime(row["created_at"]),
+			CreatedBy:          asString(row["created_by"]),
+			Owner:              asString(row["owner"]),
+			UpdatedAt:          asTime(row["updated_at"]),
+			ClosedBySession:    asString(row["closed_by_session"]),
+			ExternalRef:        asString(row["external_ref"]),
+			SpecID:             asString(row["spec_id"]),
+			Metadata:           strDefault(row["metadata"], "{}"),
+			SourceRepo:         asString(row["source_repo"]),
+			SourceSystem:       asString(row["source_system"]),
+			CloseReason:        asString(row["close_reason"]),
+			Sender:             asString(row["sender"]),
+			Ephemeral:          asInt(row["ephemeral"], 0) != 0 || forceEphemeral,
+			Pinned:             asInt(row["pinned"], 0) != 0,
+			IsTemplate:         asInt(row["is_template"], 0) != 0,
+			WispType:           asString(row["wisp_type"]),
+			MolType:            asString(row["mol_type"]),
+			RoleType:           asString(row["role_type"]),
+			EventKind:          asString(row["event_kind"]),
+			Actor:              asString(row["actor"]),
+			Target:             asString(row["target"]),
+			Payload:            asString(row["payload"]),
+			StartedAt:          asTimePtr(row["started_at"]),
+			ClosedAt:           asTimePtr(row["closed_at"]),
+			DueAt:              asTimePtr(row["due_at"]),
+			DeferUntil:         asTimePtr(row["defer_until"]),
 		}
-		if dueAt.Valid {
-			t := dueAt.Time
-			i.DueAt = &t
-		}
-		if deferUntil.Valid {
-			t := deferUntil.Time
-			i.DeferUntil = &t
-		}
+
 		if existing, _ := m.dst.GetIssue(ctx, i.ID); existing != nil {
 			if !m.force {
 				m.stats.skipped++
@@ -255,6 +276,88 @@ func (m *migrator) copyIssuesFromTable(ctx context.Context, table string, forceE
 	return rows.Err()
 }
 
+// asString returns the column value as a string. Treats nil + non-strings
+// gracefully (mysql JSON columns come back as []byte).
+func asString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	default:
+		return fmt.Sprint(x)
+	}
+}
+
+func strDefault(v any, fallback string) string {
+	s := asString(v)
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+func asInt(v any, fallback int) int {
+	switch x := v.(type) {
+	case nil:
+		return fallback
+	case int64:
+		return int(x)
+	case int32:
+		return int(x)
+	case int:
+		return x
+	case []byte:
+		if n, err := strconv.Atoi(string(x)); err == nil {
+			return n
+		}
+	case string:
+		if n, err := strconv.Atoi(x); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func asTime(v any) time.Time {
+	t := asTimePtr(v)
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
+func asTimePtr(v any) *time.Time {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case time.Time:
+		if x.IsZero() {
+			return nil
+		}
+		t := x
+		return &t
+	case []byte:
+		s := string(x)
+		if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+			return &t
+		}
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return &t
+		}
+	case string:
+		if t, err := time.Parse("2006-01-02 15:04:05", x); err == nil {
+			return &t
+		}
+		if t, err := time.Parse(time.RFC3339, x); err == nil {
+			return &t
+		}
+	}
+	return nil
+}
+
 func (m *migrator) copyDependencies(ctx context.Context) error {
 	rows, err := m.src.QueryContext(ctx, `SELECT issue_id, depends_on_id, COALESCE(type,'blocks'),
 		created_at, COALESCE(created_by,''), COALESCE(CAST(metadata AS CHAR),'{}'),
@@ -270,9 +373,22 @@ func (m *migrator) copyDependencies(ctx context.Context) error {
 			&d.CreatedAt, &d.CreatedBy, &d.Metadata, &d.ThreadID); err != nil {
 			return err
 		}
+		// Some upstream rows store depends_on_id as "<type>:<id>" (e.g.
+		// "blocks:teejar-ztv"). Strip a single "<word>:" prefix when present.
+		d.IssueID = stripTypePrefix(d.IssueID)
+		d.DependsOnID = stripTypePrefix(d.DependsOnID)
 		d.Type = beads.DependencyType(t)
 		if err := m.dst.AddDependency(ctx, d); err != nil {
 			if errors.Is(err, store.ErrCycle) {
+				m.stats.skipped++
+				continue
+			}
+			// Orphan dep (FK violation) — issue referenced doesn't exist on
+			// our side. Don't fail the whole migration; just skip.
+			if strings.Contains(err.Error(), "not found") ||
+				strings.Contains(err.Error(), "foreign key") ||
+				strings.Contains(err.Error(), "violates") {
+				fmt.Fprintf(os.Stderr, "skip orphan dep %s -> %s: %v\n", d.IssueID, d.DependsOnID, err)
 				m.stats.skipped++
 				continue
 			}
@@ -281,6 +397,23 @@ func (m *migrator) copyDependencies(ctx context.Context) error {
 		m.stats.deps++
 	}
 	return rows.Err()
+}
+
+// stripTypePrefix removes a leading "<word>:" prefix if present, leaving
+// just the issue id. Upstream sometimes stores depends_on_id as
+// "blocks:bd-XXXX"; our schema keeps the type in its own column.
+func stripTypePrefix(s string) string {
+	colon := strings.Index(s, ":")
+	if colon <= 0 {
+		return s
+	}
+	prefix := s[:colon]
+	for _, r := range prefix {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return s
+		}
+	}
+	return s[colon+1:]
 }
 
 func (m *migrator) copyLabels(ctx context.Context) error {

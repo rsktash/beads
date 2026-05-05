@@ -51,6 +51,19 @@ export interface Issue {
   payload: string;
   due_at: string | null;
   defer_until: string | null;
+
+  // server-enriched (always present in /api/issues responses):
+  parent_id: string;
+  parent_title: string;
+  total_children: number;
+  closed_children: number;
+  blocked_by_count: number;
+  comment_count: number;
+}
+
+export interface BlockedByEntry {
+  id: string;
+  title: string;
 }
 
 export interface Dependency {

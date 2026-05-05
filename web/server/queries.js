@@ -11,35 +11,57 @@ export async function getConfigValue(db, key) {
   return r ? String(r.value) : '';
 }
 
+// issuesEnrichedSelect adds computed columns to a base SELECT — used by
+// listIssues, readyIssues, and getIssue so the client always sees the same
+// shape (parent_id, parent_title, total_children, closed_children,
+// blocked_by_count, comment_count).
+const ENRICHED = `
+  i.*,
+  (SELECT depends_on_id FROM dependencies d
+    WHERE d.issue_id = i.id AND d.type = 'parent-child' LIMIT 1) AS parent_id,
+  (SELECT p.title FROM dependencies d JOIN issues p ON p.id = d.depends_on_id
+    WHERE d.issue_id = i.id AND d.type = 'parent-child' LIMIT 1) AS parent_title,
+  (SELECT COUNT(*) FROM dependencies d
+    WHERE d.depends_on_id = i.id AND d.type = 'parent-child') AS total_children,
+  (SELECT COUNT(*) FROM dependencies d JOIN issues c ON c.id = d.issue_id
+    WHERE d.depends_on_id = i.id AND d.type = 'parent-child'
+      AND c.status = 'closed') AS closed_children,
+  (SELECT COUNT(*) FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
+    WHERE d.issue_id = i.id AND d.type = 'blocks'
+      AND b.status NOT IN ('closed', 'pinned')) AS blocked_by_count,
+  (SELECT COUNT(*) FROM comments c WHERE c.issue_id = i.id) AS comment_count
+`;
+
 export async function listIssues(db, filters = {}, limit = 0) {
   const where = [];
   const args = [];
   if (filters.status) {
-    where.push('status = ?');
+    where.push('i.status = ?');
     args.push(filters.status);
   }
   if (filters.type) {
-    where.push('issue_type = ?');
+    where.push('i.issue_type = ?');
     args.push(filters.type);
   }
   if (filters.assignee) {
-    where.push('assignee = ?');
+    where.push('i.assignee = ?');
     args.push(filters.assignee);
   }
   if (filters.priority !== undefined && filters.priority !== null && filters.priority !== '') {
-    where.push('priority = ?');
+    where.push('i.priority = ?');
     args.push(Number(filters.priority));
   }
-  let sql = 'SELECT * FROM issues';
+  let sql = `SELECT ${ENRICHED} FROM issues i`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
-  sql += ' ORDER BY priority ASC, created_at ASC';
+  sql += ' ORDER BY i.priority ASC, i.created_at ASC';
   if (limit > 0) sql += ` LIMIT ${Number(limit) | 0}`;
   const rows = await db.all(sql, args);
   return rows.map(rowToIssue);
 }
 
 export async function getIssue(db, id) {
-  const r = await db.one('SELECT * FROM issues WHERE id = ?', [id]);
+  const sql = `SELECT ${ENRICHED} FROM issues i WHERE i.id = ?`;
+  const r = await db.one(sql, [id]);
   return r ? rowToIssue(r) : null;
 }
 
@@ -49,6 +71,21 @@ export async function listLabels(db, issueId) {
     [issueId],
   );
   return rows.map((r) => r.label);
+}
+
+// listBlockedBy returns up to `limit` issue ids/titles that currently block
+// the given issue. Used by the IssueCard "blocked by" badges.
+export async function listBlockedBy(db, issueId, limit = 5) {
+  const rows = await db.all(
+    `SELECT b.id, b.title FROM dependencies d
+       JOIN issues b ON b.id = d.depends_on_id
+       WHERE d.issue_id = ? AND d.type = 'blocks'
+         AND b.status NOT IN ('closed', 'pinned')
+       ORDER BY b.created_at
+       LIMIT ${Number(limit) | 0}`,
+    [issueId],
+  );
+  return rows;
 }
 
 export async function listDependencies(db, issueId) {
@@ -68,10 +105,8 @@ export async function listComments(db, issueId) {
 }
 
 export async function readyIssues(db) {
-  // Mirrors store.Ready() in the Go side: open, non-ephemeral, non-template,
-  // not deferred, no `blocks` dep from a non-{closed,pinned} issue.
   const sql = `
-    SELECT i.* FROM issues i
+    SELECT ${ENRICHED} FROM issues i
     WHERE i.status = 'open'
       AND i.ephemeral = 0
       AND i.is_template = 0
@@ -89,9 +124,6 @@ export async function readyIssues(db) {
   return rows.map(rowToIssue);
 }
 
-// listProjects scans postgres for schemas that look like a beads project
-// (i.e. contain a `config` table with an `issue_prefix` row). Returns []
-// for sqlite — there is only one project per file.
 export async function listProjects(db) {
   if (db.driver !== 'postgres') return [];
   const sql = `

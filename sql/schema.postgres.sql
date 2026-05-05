@@ -54,8 +54,8 @@ CREATE INDEX idx_issues_created_at ON issues(created_at);
 CREATE TABLE dependencies (
     issue_id      TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     depends_on_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    type          TEXT NOT NULL DEFAULT 'blocks'
-        CHECK (type IN ('blocks','related','duplicates','supersedes','replies-to','parent-child','discovered-by')),
+    -- type is intentionally unconstrained (see schema.sqlite.sql)
+    type          TEXT NOT NULL DEFAULT 'blocks',
     created_at    TIMESTAMPTZ NOT NULL,
     created_by    TEXT NOT NULL DEFAULT '',
     metadata      TEXT NOT NULL DEFAULT '{}',

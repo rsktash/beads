@@ -1,0 +1,4 @@
+# bd config — only the DSN lives here.
+# Project settings (prefix, id mode, custom statuses) live in the DB `config` table.
+# Credentials must NOT be embedded here. Set BD_DB_PASSWORD in the env or in .bd/.env.
+db=postgres://bd@127.0.0.1:5482/tracker?search_path=beads&sslmode=disable

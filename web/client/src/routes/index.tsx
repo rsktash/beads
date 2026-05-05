@@ -1,13 +1,99 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { api } from "../lib/api";
+import { IssueCard } from "../components/IssueCard";
 import type { Issue } from "../lib/types";
-import { PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
 
-// "/" — board view: simple kanban-ish grouping by status. Shows ready issues
-// in a separate column at the top.
+const COLUMN_PAGE_SIZE = 20;
+
+const STATUS_DOTS: Record<string, string> = {
+  open: "var(--color-status-open)",
+  in_progress: "var(--color-status-in-progress)",
+  blocked: "var(--color-status-blocked)",
+  closed: "var(--color-status-closed)",
+};
+
+function Column({
+  title,
+  statusKey,
+  issues,
+  dimmed = false,
+}: {
+  title: string;
+  statusKey: string;
+  issues: Issue[];
+  dimmed?: boolean;
+}) {
+  const [limit, setLimit] = useState(COLUMN_PAGE_SIZE);
+  const visible = issues.slice(0, limit);
+  const remaining = Math.max(0, issues.length - visible.length);
+  const dotColor = STATUS_DOTS[statusKey] ?? "var(--color-ink-tertiary)";
+
+  return (
+    <div className="flex-1 min-w-[280px] max-w-[360px] flex flex-col self-start">
+      {/* column header */}
+      <div
+        className="flex items-center gap-2.5 px-1 pb-3 mb-3"
+        style={{ borderBottom: "1px solid var(--color-border-subtle)" }}
+      >
+        <span
+          className="rounded-full shrink-0"
+          style={{
+            width: 10,
+            height: 10,
+            backgroundColor: dotColor,
+            boxShadow: `0 0 0 3px color-mix(in srgb, ${dotColor} 20%, transparent)`,
+          }}
+        />
+        <h2 className="text-sm font-semibold" style={{ color: "var(--color-ink-primary)" }}>
+          {title}
+        </h2>
+        <span
+          className="text-[11px] font-medium px-2 py-0.5 rounded-full ml-auto"
+          style={{ background: "rgba(0,0,0,0.05)", color: "var(--color-ink-tertiary)" }}
+        >
+          {issues.length}
+        </span>
+      </div>
+
+      {/* card list */}
+      <div className="space-y-2 pr-1">
+        {issues.length === 0 ? (
+          <div
+            className="py-8 text-center"
+            style={{
+              border: "2px dashed var(--color-border-default)",
+              borderRadius: "var(--radius-md)",
+              minHeight: 100,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <p className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>
+              No items
+            </p>
+          </div>
+        ) : (
+          visible.map((i) => <IssueCard key={i.id} issue={i} dimmed={dimmed} />)
+        )}
+        {remaining > 0 && (
+          <button
+            onClick={() => setLimit((l) => l + COLUMN_PAGE_SIZE)}
+            className="w-full text-xs py-2"
+            style={{ color: "var(--color-ink-secondary)" }}
+          >
+            Show {remaining} more…
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BoardComponent() {
-  const issues = useQuery({
+  const all = useQuery({
     queryKey: ["issues"],
     queryFn: () => api.listIssues({}),
     refetchInterval: 5000,
@@ -18,70 +104,27 @@ function BoardComponent() {
     refetchInterval: 5000,
   });
 
-  if (issues.isLoading) return <div className="text-stone-500">loading…</div>;
-  if (issues.error) return <div className="text-red-600">{(issues.error as Error).message}</div>;
-
-  const all = issues.data?.issues ?? [];
-  const byStatus = group(all, (i) => i.status);
+  const issues = all.data?.issues ?? [];
+  const epics = issues.filter((i) => i.issue_type === "epic").length;
+  const byStatus = group(issues, (i) => i.status);
 
   return (
-    <div className="space-y-6">
-      <Column title="ready (no open blockers)" issues={ready.data?.issues ?? []} />
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <Column title="open" issues={byStatus.get("open") ?? []} />
-        <Column title="in_progress" issues={byStatus.get("in_progress") ?? []} />
-        <Column title="blocked" issues={byStatus.get("blocked") ?? []} />
-        <Column title="pinned" issues={byStatus.get("pinned") ?? []} />
-        <Column title="closed" issues={byStatus.get("closed") ?? []} />
+    <div className="p-6">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold" style={{ color: "var(--color-ink-primary)" }}>
+          Board
+        </h1>
+        <p className="text-sm mt-0.5" style={{ color: "var(--color-ink-tertiary)" }}>
+          {all.isLoading ? "loading…" : `${issues.length} issues across ${epics} epics`}
+        </p>
+      </div>
+      <div className="flex gap-4 overflow-x-auto items-start">
+        <Column title="Open" statusKey="open" issues={ready.data?.issues ?? []} />
+        <Column title="In Progress" statusKey="in_progress" issues={byStatus.get("in_progress") ?? []} />
+        <Column title="Blocked" statusKey="blocked" issues={byStatus.get("blocked") ?? []} />
+        <Column title="Closed" statusKey="closed" issues={byStatus.get("closed") ?? []} dimmed />
       </div>
     </div>
-  );
-}
-
-function Column({ title, issues }: { title: string; issues: Issue[] }) {
-  return (
-    <div
-      className="rounded-md"
-      style={{
-        background: "var(--color-bg-surface)",
-        border: "1px solid var(--color-border-subtle)",
-      }}
-    >
-      <div
-        className="px-3 py-2 text-xs uppercase tracking-wide font-mono"
-        style={{
-          color: "var(--color-ink-tertiary)",
-          borderBottom: "1px solid var(--color-border-subtle)",
-        }}
-      >
-        {title} <span style={{ opacity: 0.6 }}>({issues.length})</span>
-      </div>
-      <div className="p-2 space-y-2 min-h-[80px]">
-        {issues.map((i) => (
-          <Card key={i.id} issue={i} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Card({ issue }: { issue: Issue }) {
-  return (
-    <Link
-      to="/issue/$id"
-      params={{ id: issue.id }}
-      className="issue-card block p-2.5 hover:no-underline"
-    >
-      <div className="flex items-center gap-2 text-xs">
-        <span className="font-mono" style={{ color: "var(--color-ink-tertiary)" }}>{issue.id}</span>
-        <PriorityBadge priority={issue.priority} />
-        <TypeBadge type={issue.issue_type} />
-      </div>
-      <div className="text-sm mt-1.5" style={{ color: "var(--color-ink-primary)" }}>{issue.title}</div>
-      {issue.assignee && (
-        <div className="text-xs mt-1" style={{ color: "var(--color-ink-tertiary)" }}>@{issue.assignee}</div>
-      )}
-    </Link>
   );
 }
 
@@ -94,9 +137,5 @@ function group<T, K>(xs: T[], key: (x: T) => K): Map<K, T[]> {
   }
   return m;
 }
-
-// inline status badge import for type, only used to build the column titles
-// (not currently rendered). kept here in case a follow-up wants it.
-export const __unused_StatusBadge = StatusBadge;
 
 export const Route = createFileRoute("/")({ component: BoardComponent });
