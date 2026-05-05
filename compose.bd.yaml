@@ -1,0 +1,58 @@
+# Self-contained compose: Postgres + bd-web. Designed to be copied to a
+# server, edited in place, and run with `docker compose -f compose.bd.yaml up -d`.
+#
+# Before deploying:
+#   1. Replace CHANGE_ME (POSTGRES_PASSWORD + BD_DB_PASSWORD — must match).
+#   2. Set search_path=<your-project> in the BD_DB DSN (must match the
+#      `--prefix` used at `bd init` on the host running the Go CLI).
+#   3. `chmod 600 compose.bd.yaml` so other host users can't read it.
+#
+# For the dev variant that builds bd-web from ./web, see docker-compose.yml.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: bd-postgres
+    environment:
+      POSTGRES_DB: tracker
+      POSTGRES_USER: bd
+      POSTGRES_PASSWORD: CHANGE_ME
+    volumes:
+      - bd-pgdata:/var/lib/postgresql/data
+    ports:
+      # Bound to localhost so Postgres is only reachable from the host
+      # itself; bd-web reaches it over the docker network at postgres:5432.
+      - "localhost:5482:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  bd-web:
+    image: ghcr.io/rsktash/bd-web:latest
+    container_name: bd-web
+    environment:
+      # search_path is the project prefix — one schema per project on a
+      # shared Postgres. Change `myproject` to whatever you used at
+      # `bd init --prefix <name>` on the host.
+      BD_DB: postgres://bd@postgres:5432/tracker?sslmode=disable&search_path=myproject
+      BD_DB_PASSWORD: CHANGE_ME
+      HOST: 0.0.0.0
+      PORT: 3333
+      # Optional auth: bind-mount a JSON users file and uncomment the env var.
+      # BD_WEB_AUTH_FILE: /etc/bd/users.json
+    # volumes:
+    #   - ./users.json:/etc/bd/users.json:ro
+    ports:
+      # host port 3383 → container port 3333. Pick any free host port; the
+      # container internally listens on PORT=3333 (set above).
+      - "localhost:3383:3333"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  bd-pgdata:

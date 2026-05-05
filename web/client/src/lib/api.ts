@@ -6,6 +6,7 @@ import type { Comment, Dependency, Issue, Me } from "./types";
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
+    this.name = "ApiError";
   }
 }
 
@@ -34,6 +35,10 @@ async function call<T>(
     let msg: string;
     try { msg = (await res.json()).error ?? `${res.status}`; }
     catch { msg = `${res.status}`; }
+    // A 401 mid-session means the token was wiped/expired. Drop the stale
+    // token so the Login screen shows on next render instead of a hard
+    // unauthorized message everywhere.
+    if (res.status === 401) writeToken("");
     throw new ApiError(res.status, msg);
   }
   if (res.status === 204) return undefined as T;
