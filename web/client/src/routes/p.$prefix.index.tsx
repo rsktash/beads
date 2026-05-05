@@ -111,6 +111,14 @@ function BoardComponent() {
   const epics = issues.filter((i) => i.issue_type === "epic").length;
   const byStatus = group(issues, (i) => i.status);
 
+  // "Blocked" = literal status=blocked OR open issues with open blockers.
+  // The /ready endpoint already excludes the second set from the Open column,
+  // so without this, blocked-by-deps issues fall through every column.
+  const blocked = [
+    ...(byStatus.get("blocked") ?? []),
+    ...(byStatus.get("open") ?? []).filter((i) => i.blocked_by_count > 0),
+  ];
+
   return (
     <div>
       <div className="mb-6">
@@ -124,7 +132,7 @@ function BoardComponent() {
       <div className="flex gap-4 overflow-x-auto items-start">
         <Column title="Open" statusKey="open" issues={ready.data?.issues ?? []} />
         <Column title="In Progress" statusKey="in_progress" issues={byStatus.get("in_progress") ?? []} />
-        <Column title="Blocked" statusKey="blocked" issues={byStatus.get("blocked") ?? []} />
+        <Column title="Blocked" statusKey="blocked" issues={blocked} />
         <Column title="Closed" statusKey="closed" issues={byStatus.get("closed") ?? []} dimmed />
       </div>
     </div>
