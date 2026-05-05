@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+// Thin CLI shim for `bd-web`. Mirrors beads-ui/bin/bd-ui in shape: parses a
+// few flags (start/stop/restart, --port, --host, --debug, --open) and spawns
+// the server. We keep the surface tiny — heavy lifting lives in server/.
+
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SERVER = resolve(HERE, '..', 'server', 'index.js');
+
+const argv = process.argv.slice(2);
+const flags = { open: false, debug: false, host: undefined, port: undefined };
+let action = 'start';
+
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  switch (a) {
+    case '-h':
+    case '--help':
+      printHelp();
+      process.exit(0);
+    case '-v':
+    case '--version':
+      printVersion();
+      process.exit(0);
+    case 'start':
+    case 'stop':
+    case 'restart':
+      action = a;
+      break;
+    case '-d':
+    case '--debug':
+      flags.debug = true;
+      break;
+    case '--open':
+      flags.open = true;
+      break;
+    case '--host':
+      flags.host = argv[++i];
+      break;
+    case '--port':
+      flags.port = argv[++i];
+      break;
+    default:
+      process.stderr.write(`unknown arg: ${a}\n`);
+      process.exit(2);
+  }
+}
+
+if (action !== 'start') {
+  process.stderr.write(`only 'start' is implemented for now (got '${action}')\n`);
+  process.exit(2);
+}
+
+const env = { ...process.env };
+if (flags.port) env.PORT = String(flags.port);
+if (flags.host) env.HOST = flags.host;
+if (flags.debug) env.DEBUG = (env.DEBUG ? env.DEBUG + ',' : '') + 'bd-web*';
+if (flags.open) env.BD_WEB_OPEN = '1';
+
+const child = spawn(process.execPath, [SERVER], { env, stdio: 'inherit' });
+child.on('exit', (code) => process.exit(code ?? 0));
+
+function printHelp() {
+  process.stdout.write(`bd-web — web UI for beads
+
+Usage:
+  bd-web start [options]
+
+Options:
+  -h, --help          Show this help
+  -v, --version       Show version
+  -d, --debug         Verbose logging
+      --open          Open browser after start
+      --host <addr>   Bind address (default 127.0.0.1; HOST env)
+      --port <num>    Bind port (default 3333; PORT env)
+
+Environment:
+  BD_DB                 Override DSN (otherwise read from .bd/config)
+  BD_DB_PASSWORD        Password for postgres DSN (or .bd/.env, .env)
+  BD_WEB_AUTH_FILE      Optional JSON users file to enable auth
+  HOST, PORT            Bind address overrides
+`);
+}
+
+function printVersion() {
+  // The version is read from the package.json next to us, not hardcoded.
+  import('node:fs').then((fs) => {
+    const pkg = JSON.parse(fs.readFileSync(resolve(HERE, '..', 'package.json'), 'utf8'));
+    process.stdout.write(pkg.version + '\n');
+  });
+}

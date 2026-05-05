@@ -1,0 +1,120 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Solarized Light theme — same palette as beads-ui (gastownhall/beads-ui).
+ * In Tailwind v4 the design tokens live in @theme, exposed as `--color-*`,
+ * `--font-*`, etc. for use in utility classes (`bg-bg-base`, `text-ink-primary`).
+ */
+@theme {
+  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* surface */
+  --color-bg-base:     #fdf6e3;
+  --color-bg-surface:  #eee8d5;
+  --color-bg-elevated: #fdf6e3;
+  --color-bg-hover:    #eee8d5;
+
+  /* text */
+  --color-ink-primary:   #002b36;
+  --color-ink-secondary: #073642;
+  --color-ink-tertiary:  #586e75;
+  --color-ink-inverse:   #fdf6e3;
+
+  /* border */
+  --color-border-subtle:  rgba(7, 54, 66, 0.08);
+  --color-border-default: rgba(7, 54, 66, 0.15);
+
+  /* accent — solarized cyan */
+  --color-accent:      #2aa198;
+  --color-accent-soft: rgba(42, 161, 152, 0.12);
+
+  /* status */
+  --color-status-open:        #268bd2;
+  --color-status-in-progress: #b58900;
+  --color-status-blocked:     #dc322f;
+  --color-status-closed:      #859900;
+  --color-status-pinned:      #d33682;
+
+  /* priority */
+  --color-priority-0: #dc322f;
+  --color-priority-1: #cb4b16;
+  --color-priority-2: #268bd2;
+  --color-priority-3: #859900;
+  --color-priority-4: #93a1a1;
+
+  /* type */
+  --color-type-task:    #2aa198;
+  --color-type-bug:     #dc322f;
+  --color-type-feature: #6c71c4;
+  --color-type-epic:    #d33682;
+  --color-type-message: #2aa198;
+  --color-type-chore:   #839496;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --shadow-sm:   0 1px 2px rgba(0, 43, 54, 0.06);
+  --shadow-card: 0 1px 3px rgba(0, 43, 54, 0.06), 0 0 0 1px rgba(0, 43, 54, 0.04);
+  --shadow-md:   0 4px 12px rgba(0, 43, 54, 0.08);
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--color-bg-base);
+  color: var(--color-ink-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* IssueCard — same shape as beads-ui */
+.issue-card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  transition:
+    box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.issue-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+/* Markdown task-list checkboxes — same treatment */
+.prose input[type="checkbox"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-status-blocked);
+  border-radius: 4px;
+  vertical-align: middle;
+  margin-right: 6px;
+  cursor: default;
+  position: relative;
+  background: rgba(220, 50, 47, 0.08);
+}
+.prose input[type="checkbox"]:checked {
+  background: var(--color-status-closed);
+  border-color: var(--color-status-closed);
+}
+.prose input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  width: 6px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.prose ul:has(input[type="checkbox"]) {
+  list-style: none;
+  padding-left: 0;
+}
