@@ -64,6 +64,7 @@ export const api = {
       dependencies: Dependency[];
       comments: Comment[];
       blocked_by: { id: string; title: string }[];
+      children: { id: string; title: string; status: string; priority: number; issue_type: string }[];
     }>("GET", `/api/issues/${encodeURIComponent(id)}`),
   listProjects: () => call<{ projects: { prefix: string }[] }>("GET", "/api/projects"),
 

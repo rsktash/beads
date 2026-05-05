@@ -88,6 +88,21 @@ export async function listBlockedBy(db, issueId, limit = 5) {
   return rows;
 }
 
+// listChildren returns the parent-child children of an issue (where THIS
+// issue is the depends_on_id, type='parent-child'). Used by the metadata
+// sidebar's Children card.
+export async function listChildren(db, parentId) {
+  const rows = await db.all(
+    `SELECT c.id, c.title, c.status, c.priority, c.issue_type
+       FROM dependencies d
+       JOIN issues c ON c.id = d.issue_id
+       WHERE d.depends_on_id = ? AND d.type = 'parent-child'
+       ORDER BY c.priority ASC, c.created_at ASC`,
+    [parentId],
+  );
+  return rows;
+}
+
 export async function listDependencies(db, issueId) {
   const rows = await db.all(
     'SELECT * FROM dependencies WHERE issue_id = ? OR depends_on_id = ? ORDER BY created_at',

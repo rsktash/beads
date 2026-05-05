@@ -56,11 +56,16 @@ function IssueDetail() {
   if (q.error)     return <div className="text-red-600">{(q.error as Error).message}</div>;
   if (!q.data)     return null;
 
-  const { issue, labels, dependencies, comments, blocked_by } = q.data;
+  const { issue, labels, dependencies, comments, blocked_by, children } = q.data;
 
   return (
     <div className="flex h-full -m-6">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-5 max-w-4xl">
+      {/* TOC on the LEFT (hidden below xl), matches upstream order */}
+      <div className="shrink-0 hidden xl:block w-56 p-6 pr-0">
+        <TableOfContents container={scrollRef.current} />
+      </div>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-5 min-w-0">
         {/* breadcrumbs */}
         <div
           className="flex items-center gap-2 text-sm"
@@ -156,14 +161,10 @@ function IssueDetail() {
         issue={issue}
         labels={labels}
         blocked_by={blocked_by}
+        children_={children}
         onAddLabel={(l) => addLabel.mutate(l)}
         onRemoveLabel={(l) => removeLabel.mutate(l)}
       />
-
-      {/* TOC on xl+ screens */}
-      <div className="hidden xl:block w-56 p-6 pl-0">
-        <TableOfContents container={scrollRef.current} />
-      </div>
     </div>
   );
 }
@@ -288,11 +289,12 @@ function Comments({
 }
 
 function MetadataSidebar({
-  issue, labels, blocked_by, onAddLabel, onRemoveLabel,
+  issue, labels, blocked_by, children_, onAddLabel, onRemoveLabel,
 }: {
   issue: Issue;
   labels: string[];
   blocked_by: { id: string; title: string }[];
+  children_: { id: string; title: string; status: string; priority: number; issue_type: string }[];
   onAddLabel: (l: string) => void;
   onRemoveLabel: (l: string) => void;
 }) {
@@ -414,11 +416,38 @@ function MetadataSidebar({
         </Meta>
       )}
 
-      {issue.total_children > 0 && (
+      {children_ && children_.length > 0 && (
         <Meta label={`Children (${issue.closed_children}/${issue.total_children})`}>
-          <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>
-            {issue.closed_children} of {issue.total_children} closed
-          </span>
+          <ul className="space-y-1">
+            {children_.map((c) => (
+              <li key={c.id}>
+                <Link
+                  to="/issue/$id"
+                  params={{ id: c.id }}
+                  className="block rounded px-1 py-1 -mx-1"
+                  style={{ opacity: c.status === "closed" ? 0.6 : 1 }}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <StatusBadge status={c.status} />
+                    <span
+                      className="font-mono text-[11px] truncate"
+                      style={{ color: "var(--color-ink-tertiary)" }}
+                    >
+                      {c.id}
+                    </span>
+                  </div>
+                  {c.title && (
+                    <p
+                      className="text-xs leading-snug pl-0.5 line-clamp-2"
+                      style={{ color: "var(--color-ink-secondary)" }}
+                    >
+                      {c.title}
+                    </p>
+                  )}
+                </Link>
+              </li>
+            ))}
+          </ul>
         </Meta>
       )}
 
