@@ -1,70 +1,41 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 
 	"github.com/rsktash/beads"
+	"github.com/rsktash/beads/internal/config"
 	"github.com/rsktash/beads/store"
 )
 
-// envPassword resolves a password for the MySQL DSN at migrate time, looking
-// at (in order): the DSN itself (already contains `:pw@`), $BEADS_DOLT_PASSWORD,
-// then a .env file in cwd or ./.bd/.
-func envPassword() string {
-	if v := os.Getenv("BEADS_DOLT_PASSWORD"); v != "" {
+// EnvMigrateSourcePassword names the env var (and .env key) for the
+// migration source's password. Stays as BEADS_DOLT_PASSWORD per user request.
+const EnvMigrateSourcePassword = "BEADS_DOLT_PASSWORD"
+
+// migrateSourcePassword resolves the migration-source password from
+// $BEADS_DOLT_PASSWORD, then .env files (cwd then .bd/.env).
+func migrateSourcePassword() string {
+	if v := os.Getenv(EnvMigrateSourcePassword); v != "" {
 		return v
 	}
-	for _, p := range []string{".env", filepath.Join(".bd", ".env")} {
-		if v := readEnvKey(p, "BEADS_DOLT_PASSWORD"); v != "" {
+	for _, p := range []string{".env", ".bd/.env"} {
+		if v := config.ReadEnvKey(p, EnvMigrateSourcePassword); v != "" {
 			return v
 		}
 	}
 	return ""
 }
 
-// readEnvKey reads a single KEY from a dotenv-style file. Tolerates `export `,
-// optional surrounding quotes, and `# comments`. Returns "" if missing.
-func readEnvKey(path, key string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	prefix := key + "="
-	exportPrefix := "export " + prefix
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, exportPrefix) {
-			line = strings.TrimPrefix(line, "export ")
-		}
-		if !strings.HasPrefix(line, prefix) {
-			continue
-		}
-		v := strings.TrimPrefix(line, prefix)
-		v = strings.TrimSpace(v)
-		v = strings.Trim(v, `"'`)
-		return v
-	}
-	return ""
-}
-
 // injectMysqlPassword adds password into a `user@tcp(host)/db` MySQL DSN if
-// the DSN doesn't already include credentials. Leaves DSNs alone if they
-// already have a colon before the @ (i.e. user:pw@... form).
+// the DSN doesn't already include credentials.
 func injectMysqlPassword(dsn, pw string) string {
 	if pw == "" {
 		return dsn
@@ -73,11 +44,11 @@ func injectMysqlPassword(dsn, pw string) string {
 	if at <= 0 {
 		return dsn
 	}
-	credential := dsn[:at]
-	if strings.Contains(credential, ":") {
-		return dsn // already has password
+	cred := dsn[:at]
+	if strings.Contains(cred, ":") {
+		return dsn
 	}
-	return credential + ":" + pw + dsn[at:]
+	return cred + ":" + pw + dsn[at:]
 }
 
 // newMigrateCmd imports issues, dependencies, labels, and comments from an
@@ -110,7 +81,7 @@ func newMigrateCmd() *cobra.Command {
 			}
 			defer cc.store.Close()
 
-			from := injectMysqlPassword(from, envPassword())
+			from := injectMysqlPassword(from, migrateSourcePassword())
 			src, err := sql.Open("mysql", from)
 			if err != nil {
 				return fmt.Errorf("open source: %w", err)
