@@ -124,7 +124,7 @@ function ListComponent() {
   }, [q.data, search]);
 
   return (
-    <div className="p-6">
+    <div>
       <div className="mb-4">
         <h1 className="text-xl font-bold" style={{ color: "var(--color-ink-primary)" }}>
           List

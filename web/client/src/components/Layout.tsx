@@ -191,7 +191,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         )}
       </nav>
-      <main className="flex-1 overflow-auto">{children}</main>
+      <main className="flex-1 overflow-auto p-6">{children}</main>
     </div>
   );
 }

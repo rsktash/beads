@@ -109,7 +109,7 @@ function BoardComponent() {
   const byStatus = group(issues, (i) => i.status);
 
   return (
-    <div className="p-6">
+    <div>
       <div className="mb-6">
         <h1 className="text-xl font-bold" style={{ color: "var(--color-ink-primary)" }}>
           Board

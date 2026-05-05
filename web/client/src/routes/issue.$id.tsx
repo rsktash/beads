@@ -20,16 +20,20 @@ function IssueDetail() {
   const { issue, labels, dependencies, comments } = q.data;
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-4xl space-y-6">
       <div className="space-y-2">
         <div className="flex items-center gap-2 text-xs">
-          <span className="font-mono text-stone-500">{issue.id}</span>
+          <span className="font-mono" style={{ color: "var(--color-ink-tertiary)" }}>{issue.id}</span>
           <PriorityBadge priority={issue.priority} />
           <StatusBadge status={issue.status} />
           <TypeBadge type={issue.issue_type} />
-          {issue.assignee && <span className="text-stone-500">@{issue.assignee}</span>}
+          {issue.assignee && (
+            <span style={{ color: "var(--color-ink-tertiary)" }}>@{issue.assignee}</span>
+          )}
         </div>
-        <h1 className="text-2xl font-semibold text-stone-900">{issue.title}</h1>
+        <h1 className="text-2xl font-semibold" style={{ color: "var(--color-ink-primary)" }}>
+          {issue.title}
+        </h1>
         {labels.length > 0 && (
           <div className="flex gap-1.5 text-xs">
             {labels.map((l) => (
