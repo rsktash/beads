@@ -54,13 +54,18 @@ export function authMiddleware(auth) {
     const p = c.req.path;
     if (p === '/api/auth/login' || p === '/api/healthz') return next();
 
+    // Token sources: Authorization: Bearer header (default) OR ?token= query
+    // param (fallback for SSE — EventSource can't set custom headers).
+    let token = '';
     const header = c.req.header('authorization') || '';
     const m = /^Bearer\s+(\S+)$/i.exec(header);
-    if (!m) return c.json({ error: 'unauthorized' }, 401);
-    const session = auth.tokens.get(m[1]);
+    if (m) token = m[1];
+    else token = c.req.query('token') || '';
+    if (!token) return c.json({ error: 'unauthorized' }, 401);
+    const session = auth.tokens.get(token);
     if (!session) return c.json({ error: 'unauthorized' }, 401);
     c.set('user', { username: session.username, role: session.role });
-    c.set('token', m[1]);
+    c.set('token', token);
     return next();
   };
 }

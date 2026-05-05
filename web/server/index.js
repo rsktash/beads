@@ -16,6 +16,7 @@ import { getConfigValue } from './queries.js';
 import { authMiddleware, fingerprint, loadAuth } from './auth.js';
 import { authRouter } from './routes/auth.js';
 import { issuesRouter } from './routes/issues.js';
+import { streamHandler } from './routes/stream.js';
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3333);
@@ -111,6 +112,7 @@ async function main() {
   });
 
   app.route('/api/p/:prefix/issues', issuesRouter());
+  app.get('/api/p/:prefix/stream', streamHandler);
 
   app.notFound((c) => c.json({ error: 'not found' }, 404));
   app.onError((err, c) => {

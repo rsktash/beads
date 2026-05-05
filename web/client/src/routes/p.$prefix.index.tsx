@@ -99,12 +99,12 @@ function BoardComponent() {
   const all = useQuery({
     queryKey: ["issues", prefix],
     queryFn: () => api.listIssues({}),
-    refetchInterval: 5000,
+    refetchInterval: 60_000, // SSE pushes invalidations; this is a safety fallback
   });
   const ready = useQuery({
     queryKey: ["issues", prefix, "ready"],
     queryFn: () => api.ready(),
-    refetchInterval: 5000,
+    refetchInterval: 60_000, // SSE pushes invalidations; this is a safety fallback
   });
 
   const issues = all.data?.issues ?? [];

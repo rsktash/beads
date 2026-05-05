@@ -112,7 +112,7 @@ function ListComponent() {
   const q = useQuery({
     queryKey: ["issues", prefix, params],
     queryFn: () => api.listIssues(params),
-    refetchInterval: 5000,
+    refetchInterval: 60_000, // SSE pushes invalidations; this is a safety fallback
   });
 
   const issues = useMemo(() => {

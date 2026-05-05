@@ -24,7 +24,7 @@ function IssueDetail() {
   const q = useQuery({
     queryKey: ["issue", id],
     queryFn: () => api.getIssue(id),
-    refetchInterval: 5000,
+    refetchInterval: 60_000, // SSE pushes invalidations; this is a safety fallback
   });
 
   // Scroll to fragment after first render (e.g. /issue/foo#section).
