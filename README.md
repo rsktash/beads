@@ -67,6 +67,33 @@ bd create "kickoff retro" --due 2026-05-20T15:00:00Z
 bd create "later thing"   --defer 2026-06-01T00:00:00Z   # excluded from `ready` until then
 ```
 
+## File-based updates
+
+`bd edit <id>` opens the bead in `$EDITOR` as YAML and applies the diff on
+save (title, description, design, acceptance, notes, type, status, priority,
+assignee, owner, labels, due, defer, ephemeral). Non-listed fields are
+read-only.
+
+`bd batch [-f file]` runs a line-oriented script of ops. Reads stdin by
+default. Lines starting with `#` are comments. Grammar:
+
+```
+# bootstrap
+create epic 0 "Auth rewrite"  assignee=alice
+create task 1 "Login endpoint"
+update bd-XXXX priority=0 status=in_progress
+label add bd-XXXX infra
+comment bd-XXXX "owner is alice"
+dep add bd-YYYY bd-XXXX blocks
+close bd-ZZZZ wontfix later
+```
+
+Keys for `create`/`update`: `title, desc, design, accept, notes, status,
+priority, type, assignee, owner, due, defer, ephemeral`. Strings with spaces
+go in `"double quotes"`. v0.1 runs sequentially: first error aborts; previously
+applied ops in the same batch are NOT rolled back. Atomic transactional mode
+is on the roadmap.
+
 ## Migrate from upstream Dolt-backed beads
 
 `bd migrate` reads from a running upstream Dolt sql-server (Dolt speaks the

@@ -47,6 +47,8 @@ func newRoot() *cobra.Command {
 		newLabelCmd(),
 		newCommentCmd(),
 		newHistoryCmd(),
+		newBatchCmd(),
+		newEditCmd(),
 		newMigrateCmd(),
 	)
 	return root
