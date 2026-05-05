@@ -9,11 +9,12 @@ package store
 import (
 	"context"
 	"database/sql"
-	_ "embed"
+	"embed"
 	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,11 +63,12 @@ var (
 // strict charset because schemas are also user-visible identifiers.
 var schemaNameRE = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
-//go:embed schema.sqlite.sql
-var schemaSQLite string
-
-//go:embed schema.postgres.sql
-var schemaPostgres string
+// migrationsFS embeds every numbered migration file. Names look like
+// "0001_initial.sqlite.sql" / "0001_initial.postgres.sql" — the leading
+// integer is the version, the dialect is selected by suffix.
+//
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 // Store is the canonical handle.
 type Store struct {
@@ -167,20 +169,144 @@ func (s *Store) Driver() Driver { return s.driver }
 func (s *Store) Close() error   { return s.db.Close() }
 func (s *Store) DB() *sql.DB    { return s.db }
 
+// migrate runs every embedded migration whose version isn't yet recorded
+// in the `schema_migrations` table. Each migration file is idempotent
+// (CREATE TABLE IF NOT EXISTS) so applying 0001 against a pre-existing
+// database is a safe no-op that just records the version.
 func (s *Store) migrate(ctx context.Context) error {
-	var n int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues").Scan(&n); err == nil {
-		return nil
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    INTEGER PRIMARY KEY,
+		applied_at `+timestampType(s.driver)+` NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	body := schemaSQLite
-	if s.driver == DriverPostgres {
-		body = schemaPostgres
-	}
-	_, err := s.db.ExecContext(ctx, body)
+	applied, err := s.appliedMigrations(ctx)
 	if err != nil {
-		return fmt.Errorf("migrate: %w", err)
+		return fmt.Errorf("read schema_migrations: %w", err)
+	}
+	migs, err := loadMigrations(s.driver)
+	if err != nil {
+		return err
+	}
+	for _, m := range migs {
+		if applied[m.version] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, m.body); err != nil {
+			return fmt.Errorf("migration %04d (%s): %w", m.version, m.name, err)
+		}
+		ins := s.rebind(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`)
+		if _, err := s.db.ExecContext(ctx, ins, m.version, time.Now().UTC()); err != nil {
+			return fmt.Errorf("record migration %04d: %w", m.version, err)
+		}
 	}
 	return nil
+}
+
+func (s *Store) appliedMigrations(ctx context.Context) (map[int]bool, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT version FROM schema_migrations ORDER BY version")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]bool{}
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out[v] = true
+	}
+	return out, rows.Err()
+}
+
+// AppliedMigrations exposes the applied version list for `bd schema list`.
+type MigrationStatus struct {
+	Version   int
+	Name      string
+	Applied   bool
+	AppliedAt *time.Time
+}
+
+func (s *Store) MigrationStatus(ctx context.Context) ([]MigrationStatus, error) {
+	migs, err := loadMigrations(s.driver)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT version, applied_at FROM schema_migrations")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	at := map[int]time.Time{}
+	for rows.Next() {
+		var v int
+		var t time.Time
+		if err := rows.Scan(&v, &t); err != nil {
+			return nil, err
+		}
+		at[v] = t
+	}
+	out := make([]MigrationStatus, 0, len(migs))
+	for _, m := range migs {
+		st := MigrationStatus{Version: m.version, Name: m.name}
+		if t, ok := at[m.version]; ok {
+			st.Applied = true
+			st.AppliedAt = &t
+		}
+		out = append(out, st)
+	}
+	return out, nil
+}
+
+type migrationFile struct {
+	version int
+	name    string
+	body    string
+}
+
+// loadMigrations reads the embedded migrations dir and returns the ones
+// matching the active driver, sorted by version.
+func loadMigrations(driver Driver) ([]migrationFile, error) {
+	suffix := ".sqlite.sql"
+	if driver == DriverPostgres {
+		suffix = ".postgres.sql"
+	}
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		return nil, fmt.Errorf("read migrations dir: %w", err)
+	}
+	var out []migrationFile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), suffix) {
+			continue
+		}
+		// expected: "<version>_<name>.sqlite.sql" — version is leading digits.
+		base := e.Name()
+		us := strings.IndexByte(base, '_')
+		if us <= 0 {
+			continue
+		}
+		var v int
+		if _, err := fmt.Sscanf(base[:us], "%d", &v); err != nil {
+			continue
+		}
+		name := strings.TrimSuffix(base[us+1:], suffix)
+		body, err := migrationsFS.ReadFile("migrations/" + e.Name())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, migrationFile{version: v, name: name, body: string(body)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
+	return out, nil
+}
+
+func timestampType(d Driver) string {
+	if d == DriverPostgres {
+		return "TIMESTAMPTZ"
+	}
+	return "TIMESTAMP"
 }
 
 // ---------- in-DB config ----------

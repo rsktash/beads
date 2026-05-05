@@ -55,6 +55,7 @@ func newRoot() *cobra.Command {
 		newRememberCmd(),
 		newMemoriesCmd(),
 		newPrimeCmd(),
+		newSchemaCmd(),
 		newMigrateCmd(),
 	)
 	return root

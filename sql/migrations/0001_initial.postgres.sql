@@ -1,6 +1,6 @@
--- See schema.sqlite.sql for design notes. This variant uses TIMESTAMPTZ.
+-- Migration 0001 — initial bd schema for Postgres.
 
-CREATE TABLE issues (
+CREATE TABLE IF NOT EXISTS issues (
     id                  TEXT PRIMARY KEY,
     content_hash        TEXT NOT NULL DEFAULT '',
     title               TEXT NOT NULL,
@@ -45,16 +45,15 @@ CREATE TABLE issues (
     due_at              TIMESTAMPTZ,
     defer_until         TIMESTAMPTZ
 );
-CREATE INDEX idx_issues_status     ON issues(status);
-CREATE INDEX idx_issues_priority   ON issues(priority);
-CREATE INDEX idx_issues_issue_type ON issues(issue_type);
-CREATE INDEX idx_issues_assignee   ON issues(assignee);
-CREATE INDEX idx_issues_created_at ON issues(created_at);
+CREATE INDEX IF NOT EXISTS idx_issues_status     ON issues(status);
+CREATE INDEX IF NOT EXISTS idx_issues_priority   ON issues(priority);
+CREATE INDEX IF NOT EXISTS idx_issues_issue_type ON issues(issue_type);
+CREATE INDEX IF NOT EXISTS idx_issues_assignee   ON issues(assignee);
+CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
 
-CREATE TABLE dependencies (
+CREATE TABLE IF NOT EXISTS dependencies (
     issue_id      TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     depends_on_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    -- type is intentionally unconstrained (see schema.sqlite.sql)
     type          TEXT NOT NULL DEFAULT 'blocks',
     created_at    TIMESTAMPTZ NOT NULL,
     created_by    TEXT NOT NULL DEFAULT '',
@@ -62,47 +61,47 @@ CREATE TABLE dependencies (
     thread_id     TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (issue_id, depends_on_id)
 );
-CREATE INDEX idx_dependencies_depends_on      ON dependencies(depends_on_id);
-CREATE INDEX idx_dependencies_depends_on_type ON dependencies(depends_on_id, type);
-CREATE INDEX idx_dependencies_thread          ON dependencies(thread_id);
+CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on      ON dependencies(depends_on_id);
+CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on_type ON dependencies(depends_on_id, type);
+CREATE INDEX IF NOT EXISTS idx_dependencies_thread          ON dependencies(thread_id);
 
-CREATE TABLE labels (
+CREATE TABLE IF NOT EXISTS labels (
     issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     label    TEXT NOT NULL,
     PRIMARY KEY (issue_id, label)
 );
-CREATE INDEX idx_labels_label ON labels(label);
+CREATE INDEX IF NOT EXISTS idx_labels_label ON labels(label);
 
-CREATE TABLE comments (
+CREATE TABLE IF NOT EXISTS comments (
     id         TEXT PRIMARY KEY,
     issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     author     TEXT NOT NULL,
     text       TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX idx_comments_issue      ON comments(issue_id);
-CREATE INDEX idx_comments_created_at ON comments(created_at);
+CREATE INDEX IF NOT EXISTS idx_comments_issue      ON comments(issue_id);
+CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at);
 
-CREATE TABLE config (
+CREATE TABLE IF NOT EXISTS config (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE child_counters (
+CREATE TABLE IF NOT EXISTS child_counters (
     parent_id  TEXT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
     last_child INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE issue_counter (
+CREATE TABLE IF NOT EXISTS issue_counter (
     prefix  TEXT PRIMARY KEY,
     last_id INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE memories (
+CREATE TABLE IF NOT EXISTS memories (
     id         SERIAL PRIMARY KEY,
     key        TEXT NOT NULL DEFAULT '',
     value      TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     created_by TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX idx_memories_key ON memories(key);
+CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key);

@@ -1,8 +1,8 @@
--- bd v0.2 schema for SQLite. Faithful core of upstream beads
--- (gastownhall/beads), stripped of versioning/history (Dolt's job) and AI
--- memory-decay/agent-coordination columns.
+-- Migration 0001 — initial bd schema for SQLite. Idempotent: every CREATE
+-- guards with IF NOT EXISTS so applying this against an existing
+-- pre-migration database is a no-op. New schema additions go in 0002+.
 
-CREATE TABLE issues (
+CREATE TABLE IF NOT EXISTS issues (
     id                  TEXT PRIMARY KEY,
     content_hash        TEXT NOT NULL DEFAULT '',
     title               TEXT NOT NULL,
@@ -32,7 +32,6 @@ CREATE TABLE issues (
     source_system       TEXT NOT NULL DEFAULT '',
     close_reason        TEXT NOT NULL DEFAULT '',
 
-    -- type discriminator columns (data only):
     sender              TEXT NOT NULL DEFAULT '',
     ephemeral           INTEGER NOT NULL DEFAULT 0,
     pinned              INTEGER NOT NULL DEFAULT 0,
@@ -48,17 +47,15 @@ CREATE TABLE issues (
     due_at              TIMESTAMP,
     defer_until         TIMESTAMP
 );
-CREATE INDEX idx_issues_status     ON issues(status);
-CREATE INDEX idx_issues_priority   ON issues(priority);
-CREATE INDEX idx_issues_issue_type ON issues(issue_type);
-CREATE INDEX idx_issues_assignee   ON issues(assignee);
-CREATE INDEX idx_issues_created_at ON issues(created_at);
+CREATE INDEX IF NOT EXISTS idx_issues_status     ON issues(status);
+CREATE INDEX IF NOT EXISTS idx_issues_priority   ON issues(priority);
+CREATE INDEX IF NOT EXISTS idx_issues_issue_type ON issues(issue_type);
+CREATE INDEX IF NOT EXISTS idx_issues_assignee   ON issues(assignee);
+CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
 
-CREATE TABLE dependencies (
+CREATE TABLE IF NOT EXISTS dependencies (
     issue_id      TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     depends_on_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    -- type is intentionally unconstrained: upstream allows custom dependency
-    -- types via config; CHECK constraints would reject migration data.
     type          TEXT NOT NULL DEFAULT 'blocks',
     created_at    TIMESTAMP NOT NULL,
     created_by    TEXT NOT NULL DEFAULT '',
@@ -66,53 +63,47 @@ CREATE TABLE dependencies (
     thread_id     TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (issue_id, depends_on_id)
 );
-CREATE INDEX idx_dependencies_depends_on      ON dependencies(depends_on_id);
-CREATE INDEX idx_dependencies_depends_on_type ON dependencies(depends_on_id, type);
-CREATE INDEX idx_dependencies_thread          ON dependencies(thread_id);
+CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on      ON dependencies(depends_on_id);
+CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on_type ON dependencies(depends_on_id, type);
+CREATE INDEX IF NOT EXISTS idx_dependencies_thread          ON dependencies(thread_id);
 
-CREATE TABLE labels (
+CREATE TABLE IF NOT EXISTS labels (
     issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     label    TEXT NOT NULL,
     PRIMARY KEY (issue_id, label)
 );
-CREATE INDEX idx_labels_label ON labels(label);
+CREATE INDEX IF NOT EXISTS idx_labels_label ON labels(label);
 
-CREATE TABLE comments (
+CREATE TABLE IF NOT EXISTS comments (
     id         TEXT PRIMARY KEY,
     issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     author     TEXT NOT NULL,
     text       TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL
 );
-CREATE INDEX idx_comments_issue      ON comments(issue_id);
-CREATE INDEX idx_comments_created_at ON comments(created_at);
+CREATE INDEX IF NOT EXISTS idx_comments_issue      ON comments(issue_id);
+CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at);
 
--- Project-level settings stored alongside the data so all clients see the
--- same prefix, id mode, custom statuses, etc.
-CREATE TABLE config (
+CREATE TABLE IF NOT EXISTS config (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ''
 );
 
--- Per-parent atomic counter for hierarchical ids ("yuklar-a3f8.1", ".2", ...).
-CREATE TABLE child_counters (
+CREATE TABLE IF NOT EXISTS child_counters (
     parent_id  TEXT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
     last_child INTEGER NOT NULL DEFAULT 0
 );
 
--- Per-prefix sequential counter when issue_id_mode=counter (e.g. "bd-1, bd-2").
-CREATE TABLE issue_counter (
+CREATE TABLE IF NOT EXISTS issue_counter (
     prefix  TEXT PRIMARY KEY,
     last_id INTEGER NOT NULL DEFAULT 0
 );
 
--- agent-memory: free-form key/value store. `bd remember <text>` writes a row
--- with auto-incrementing key; agents read all rows back as context.
-CREATE TABLE memories (
+CREATE TABLE IF NOT EXISTS memories (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     key        TEXT NOT NULL DEFAULT '',
     value      TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL,
     created_by TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX idx_memories_key ON memories(key);
+CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
