@@ -82,6 +82,28 @@ func (q *Queries) AddLabel(ctx context.Context, arg AddLabelParams) error {
 	return err
 }
 
+const addMemory = `-- name: AddMemory :exec
+INSERT INTO memories (key, value, created_at, created_by)
+VALUES (?1, ?2, ?3, ?4)
+`
+
+type AddMemoryParams struct {
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	CreatedAt time.Time `json:"created_at"`
+	CreatedBy string    `json:"created_by"`
+}
+
+func (q *Queries) AddMemory(ctx context.Context, arg AddMemoryParams) error {
+	_, err := q.db.ExecContext(ctx, addMemory,
+		arg.Key,
+		arg.Value,
+		arg.CreatedAt,
+		arg.CreatedBy,
+	)
+	return err
+}
+
 const blocksReachableFrom = `-- name: BlocksReachableFrom :many
 SELECT depends_on_id FROM dependencies
 WHERE issue_id = ?1 AND type = ?2
@@ -253,6 +275,18 @@ DELETE FROM issues WHERE id = ?1
 
 func (q *Queries) DeleteIssue(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteIssue, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteMemory = `-- name: DeleteMemory :execrows
+DELETE FROM memories WHERE id = ?1
+`
+
+func (q *Queries) DeleteMemory(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteMemory, id)
 	if err != nil {
 		return 0, err
 	}
@@ -434,6 +468,41 @@ func (q *Queries) ListLabels(ctx context.Context, issueID string) ([]string, err
 			return nil, err
 		}
 		items = append(items, label)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMemoriesByKey = `-- name: ListMemoriesByKey :many
+SELECT id, key, value, created_at, created_by FROM memories
+WHERE ?1 = '' OR key = ?1
+ORDER BY created_at
+`
+
+func (q *Queries) ListMemoriesByKey(ctx context.Context, key interface{}) ([]Memory, error) {
+	rows, err := q.db.QueryContext(ctx, listMemoriesByKey, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Memory
+	for rows.Next() {
+		var i Memory
+		if err := rows.Scan(
+			&i.ID,
+			&i.Key,
+			&i.Value,
+			&i.CreatedAt,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

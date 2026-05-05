@@ -878,6 +878,73 @@ func (s *Store) ListComments(ctx context.Context, issueID string) ([]beads.Comme
 	return nil, fmt.Errorf("unknown driver")
 }
 
+// ---------- memories ----------
+
+func (s *Store) AddMemory(ctx context.Context, key, value, createdBy string) error {
+	now := time.Now().UTC()
+	switch s.driver {
+	case DriverSQLite:
+		return s.sqlite.AddMemory(ctx, sqlitedb.AddMemoryParams{
+			Key: key, Value: value, CreatedAt: now, CreatedBy: createdBy,
+		})
+	case DriverPostgres:
+		return s.pg.AddMemory(ctx, pgdb.AddMemoryParams{
+			Key: key, Value: value, CreatedAt: now, CreatedBy: createdBy,
+		})
+	}
+	return fmt.Errorf("unknown driver")
+}
+
+func (s *Store) ListMemories(ctx context.Context, key string) ([]beads.Memory, error) {
+	switch s.driver {
+	case DriverSQLite:
+		rows, err := s.sqlite.ListMemoriesByKey(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]beads.Memory, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, beads.Memory{
+				ID: r.ID, Key: r.Key, Value: r.Value,
+				CreatedAt: r.CreatedAt, CreatedBy: r.CreatedBy,
+			})
+		}
+		return out, nil
+	case DriverPostgres:
+		rows, err := s.pg.ListMemoriesByKey(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]beads.Memory, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, beads.Memory{
+				ID: int64(r.ID), Key: r.Key, Value: r.Value,
+				CreatedAt: r.CreatedAt, CreatedBy: r.CreatedBy,
+			})
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("unknown driver")
+}
+
+func (s *Store) DeleteMemory(ctx context.Context, id int64) error {
+	var n int64
+	var err error
+	switch s.driver {
+	case DriverSQLite:
+		n, err = s.sqlite.DeleteMemory(ctx, id)
+	case DriverPostgres:
+		n, err = s.pg.DeleteMemory(ctx, int32(id))
+	}
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ---------- helpers ----------
 
 func (s *Store) rebind(q string) string {

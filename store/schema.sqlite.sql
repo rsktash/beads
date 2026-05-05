@@ -105,3 +105,14 @@ CREATE TABLE issue_counter (
     prefix  TEXT PRIMARY KEY,
     last_id INTEGER NOT NULL DEFAULT 0
 );
+
+-- agent-memory: free-form key/value store. `bd remember <text>` writes a row
+-- with auto-incrementing key; agents read all rows back as context.
+CREATE TABLE memories (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    key        TEXT NOT NULL DEFAULT '',
+    value      TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_memories_key ON memories(key);

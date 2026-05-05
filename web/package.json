@@ -1,6 +1,6 @@
 {
   "name": "@rsktash/bd-web",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Web UI for beads issue tracker",
   "type": "module",
   "license": "MIT",

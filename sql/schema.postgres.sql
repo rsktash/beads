@@ -97,3 +97,12 @@ CREATE TABLE issue_counter (
     prefix  TEXT PRIMARY KEY,
     last_id INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE memories (
+    id         SERIAL PRIMARY KEY,
+    key        TEXT NOT NULL DEFAULT '',
+    value      TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_memories_key ON memories(key);

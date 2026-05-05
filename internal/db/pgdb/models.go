@@ -87,3 +87,11 @@ type Label struct {
 	IssueID string `json:"issue_id"`
 	Label   string `json:"label"`
 }
+
+type Memory struct {
+	ID        int32     `json:"id"`
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	CreatedAt time.Time `json:"created_at"`
+	CreatedBy string    `json:"created_by"`
+}

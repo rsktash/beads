@@ -105,6 +105,18 @@ VALUES (sqlc.arg('prefix'), 1)
 ON CONFLICT(prefix) DO UPDATE SET last_id = issue_counter.last_id + 1
 RETURNING last_id;
 
+-- name: AddMemory :exec
+INSERT INTO memories (key, value, created_at, created_by)
+VALUES (sqlc.arg('key'), sqlc.arg('value'), sqlc.arg('created_at'), sqlc.arg('created_by'));
+
+-- name: ListMemoriesByKey :many
+SELECT id, key, value, created_at, created_by FROM memories
+WHERE sqlc.arg('key') = '' OR key = sqlc.arg('key')
+ORDER BY created_at;
+
+-- name: DeleteMemory :execrows
+DELETE FROM memories WHERE id = sqlc.arg('id');
+
 -- name: ReadyAt :many
 SELECT i.* FROM issues i
 WHERE i.status = 'open'

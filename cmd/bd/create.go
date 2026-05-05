@@ -13,6 +13,7 @@ import (
 func newCreateCmd() *cobra.Command {
 	var (
 		desc, design, accept, notes string
+		bodyFile, designFile        string
 		typeStr                     string
 		priority                    int
 		assignee, owner             string
@@ -35,6 +36,22 @@ func newCreateCmd() *cobra.Command {
 			t, err := beads.ParseType(typeStr)
 			if err != nil {
 				return err
+			}
+			// --body-file / --design-file override the inline string flags so
+			// agents can write structured prose without shell-escaping pain.
+			if bodyFile != "" {
+				body, err := readFileContents(bodyFile)
+				if err != nil {
+					return fmt.Errorf("--body-file: %w", err)
+				}
+				desc = body
+			}
+			if designFile != "" {
+				body, err := readFileContents(designFile)
+				if err != nil {
+					return fmt.Errorf("--design-file: %w", err)
+				}
+				design = body
 			}
 			due, err := parseOptTime(dueStr)
 			if err != nil {
@@ -77,7 +94,9 @@ func newCreateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&desc, "desc", "d", "", "description body")
+	cmd.Flags().StringVar(&bodyFile, "body-file", "", "read description body from file (overrides --desc)")
 	cmd.Flags().StringVar(&design, "design", "", "design notes")
+	cmd.Flags().StringVar(&designFile, "design-file", "", "read design notes from file (overrides --design)")
 	cmd.Flags().StringVar(&accept, "accept", "", "acceptance criteria")
 	cmd.Flags().StringVar(&notes, "notes", "", "extra notes")
 	cmd.Flags().StringVarP(&typeStr, "type", "t", "task", "issue type (task|bug|epic|feature|message|wisp|molecule|role|event)")

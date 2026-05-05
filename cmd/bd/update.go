@@ -13,6 +13,7 @@ import (
 func newUpdateCmd() *cobra.Command {
 	var (
 		title, desc, design, accept, notes string
+		bodyFile, designFile               string
 		typeStr, statStr                   string
 		priority                           int
 		assignee, owner                    string
@@ -33,6 +34,24 @@ func newUpdateCmd() *cobra.Command {
 
 			u := store.IssueUpdate{}
 			f := cmd.Flags()
+			// --body-file / --design-file: read once and treat as if --desc /
+			// --design were passed. Override inline flags if both given.
+			if f.Changed("body-file") {
+				body, err := readFileContents(bodyFile)
+				if err != nil {
+					return fmt.Errorf("--body-file: %w", err)
+				}
+				desc = body
+				u.Description = &desc
+			}
+			if f.Changed("design-file") {
+				body, err := readFileContents(designFile)
+				if err != nil {
+					return fmt.Errorf("--design-file: %w", err)
+				}
+				design = body
+				u.Design = &design
+			}
 			if f.Changed("title") {
 				u.Title = &title
 			}
@@ -107,7 +126,9 @@ func newUpdateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&title, "title", "", "new title")
 	cmd.Flags().StringVarP(&desc, "desc", "d", "", "new description")
+	cmd.Flags().StringVar(&bodyFile, "body-file", "", "read description from file (overrides --desc)")
 	cmd.Flags().StringVar(&design, "design", "", "new design notes")
+	cmd.Flags().StringVar(&designFile, "design-file", "", "read design notes from file (overrides --design)")
 	cmd.Flags().StringVar(&accept, "accept", "", "new acceptance criteria")
 	cmd.Flags().StringVar(&notes, "notes", "", "new notes")
 	cmd.Flags().StringVarP(&typeStr, "type", "t", "", "new type")

@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { Comment, Issue } from "../lib/types";
 import { PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
@@ -13,7 +13,11 @@ function IssueDetail() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // Callback-state ref so children that depend on the scroll container
+  // (TableOfContents) re-render when it mounts. A plain useRef wouldn't
+  // trigger their effect because React doesn't re-render on `.current`
+  // mutation.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
 
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const q = useQuery({
@@ -24,15 +28,15 @@ function IssueDetail() {
 
   // Scroll to fragment after first render (e.g. /issue/foo#section).
   useEffect(() => {
-    if (!q.data || !scrollRef.current) return;
+    if (!q.data || !scrollEl) return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
     const t = setTimeout(() => {
-      const el = scrollRef.current?.querySelector<HTMLElement>(`#${cssEsc(hash)}`);
+      const el = scrollEl.querySelector<HTMLElement>(`#${cssEsc(hash)}`);
       el?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
     return () => clearTimeout(t);
-  }, [q.data]);
+  }, [q.data, scrollEl]);
 
   const onBack = () => {
     if (window.history.length > 1) window.history.back();
@@ -62,10 +66,10 @@ function IssueDetail() {
     <div className="flex h-full -m-6">
       {/* TOC on the LEFT (hidden below xl), matches upstream order */}
       <div className="shrink-0 hidden xl:block w-56 p-6 pr-0">
-        <TableOfContents container={scrollRef.current} />
+        <TableOfContents container={scrollEl} />
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-5 min-w-0">
+      <div ref={setScrollEl} className="flex-1 overflow-y-auto p-6 space-y-5 min-w-0">
         {/* breadcrumbs */}
         <div
           className="flex items-center gap-2 text-sm"

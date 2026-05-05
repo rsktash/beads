@@ -45,7 +45,7 @@ export function TableOfContents({ container }: { container: HTMLElement | null }
     return () => container.removeEventListener("scroll", onScroll);
   }, [container, items]);
 
-  if (items.length < 2) return null;
+  if (items.length === 0) return null;
 
   const onClick = (id: string) => (e: React.MouseEvent) => {
     e.preventDefault();

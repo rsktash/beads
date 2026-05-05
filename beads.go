@@ -165,6 +165,16 @@ type Dependency struct {
 	ThreadID    string         `db:"thread_id" json:"thread_id,omitempty"`
 }
 
+// Memory is a free-form note saved to the per-project memories table —
+// agents read these back across sessions to recall project context.
+type Memory struct {
+	ID        int64     `db:"id" json:"id"`
+	Key       string    `db:"key" json:"key,omitempty"`
+	Value     string    `db:"value" json:"value"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	CreatedBy string    `db:"created_by" json:"created_by,omitempty"`
+}
+
 type Comment struct {
 	ID        string    `db:"id" json:"id"`
 	IssueID   string    `db:"issue_id" json:"issue_id"`

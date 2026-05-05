@@ -13,6 +13,7 @@ type Querier interface {
 	AddComment(ctx context.Context, arg AddCommentParams) error
 	AddDependency(ctx context.Context, arg AddDependencyParams) error
 	AddLabel(ctx context.Context, arg AddLabelParams) error
+	AddMemory(ctx context.Context, arg AddMemoryParams) error
 	BlocksReachableFrom(ctx context.Context, arg BlocksReachableFromParams) ([]string, error)
 	// Used by the adaptive id-length selector: more issues -> longer hash.
 	CountIssuesWithPrefix(ctx context.Context, likePattern string) (int64, error)
@@ -21,12 +22,14 @@ type Querier interface {
 	// only and avoid apostrophes in comments (sqlc parser is fragile here).
 	CreateIssue(ctx context.Context, arg CreateIssueParams) error
 	DeleteIssue(ctx context.Context, id string) (int64, error)
+	DeleteMemory(ctx context.Context, id int64) (int64, error)
 	GetConfigValue(ctx context.Context, key string) (string, error)
 	GetIssue(ctx context.Context, id string) (Issue, error)
 	ListComments(ctx context.Context, issueID string) ([]Comment, error)
 	ListConfig(ctx context.Context) ([]Config, error)
 	ListDependenciesTouching(ctx context.Context, id string) ([]Dependency, error)
 	ListLabels(ctx context.Context, issueID string) ([]string, error)
+	ListMemoriesByKey(ctx context.Context, key interface{}) ([]Memory, error)
 	NextChildIndex(ctx context.Context, parentID string) (int64, error)
 	NextCounterID(ctx context.Context, prefix string) (int64, error)
 	ReadyAt(ctx context.Context, now sql.NullTime) ([]Issue, error)

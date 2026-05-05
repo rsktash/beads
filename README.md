@@ -67,7 +67,7 @@ To enable auth on the web UI, drop a `users.json` next to `.bd/` and uncomment
 ## Quickstart
 
 ```sh
-bd init --prefix yuklar                 # creates .beads/beads.db, ids look like yuklar-a1b2
+bd init --prefix yuklar                 # creates .bd/bd.db, ids look like yuklar-a1b2
 bd create "Set up CI" -p 0              # priorities 0..4 (0=highest)
 bd create "Add login endpoint"
 ID=$(bd --json create "Wire login UI" -p 1 | jq -r .id)
@@ -151,7 +151,7 @@ bd migrate --from "root@tcp(127.0.0.1:3306)/beads"
 
 `<prefix>-<base36>` — e.g. `yuklar-a1b2`. Matches upstream:
 
-- `prefix` is per-project, stored in `.beads/config`. `bd init --prefix foo`
+- `prefix` is per-project, stored in the DB `config` table. `bd init --prefix foo`
   sets it explicitly; otherwise it's auto-derived from the DSN's database name
   (postgres `.../yuklar` → `yuklar`, mysql `.../yuklar` → `yuklar`,
   `auth.db` → `auth`), falling back to `bd`.
@@ -170,8 +170,8 @@ bd migrate --from "root@tcp(127.0.0.1:3306)/beads"
 In order:
 1. `--db <dsn>` flag.
 2. `$BEADS_DB`.
-3. `db=` line in `.beads/config` (walked up from cwd).
-4. Default: `.beads/beads.db` (SQLite) under the nearest `.beads/`.
+3. `db=` line in `.bd/config` (walked up from cwd).
+4. Default: `.bd/bd.db` (SQLite) under the nearest `.bd/`.
 
 Override the search root with `$BEADS_DIR`.
 
