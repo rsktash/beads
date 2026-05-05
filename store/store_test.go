@@ -295,6 +295,26 @@ func TestNextChildIDAtomic(t *testing.T) {
 
 func startsWith(s, p string) bool { return len(s) >= len(p) && s[:len(p)] == p }
 
+func TestPostgresSearchPathExtraction(t *testing.T) {
+	// pure unit test of the DSN parser; no postgres connection involved.
+	cases := []struct {
+		dsn   string
+		want  string
+		hasIt bool
+	}{
+		{"postgres://u@h/db?search_path=yuklar", "yuklar", true},
+		{"postgres://u@h/db?search_path=auth&sslmode=disable", "auth", true},
+		{"postgres://u@h/db", "", false},
+		{"postgres://u@h/db?sslmode=disable", "", false},
+	}
+	for _, c := range cases {
+		got, ok := store.PostgresSearchPathForTest(c.dsn)
+		if got != c.want || ok != c.hasIt {
+			t.Errorf("postgresSearchPath(%q) = (%q,%v); want (%q,%v)", c.dsn, got, ok, c.want, c.hasIt)
+		}
+	}
+}
+
 func TestPriorityCheckConstraint(t *testing.T) {
 	st := newSqliteStore(t)
 	ctx := context.Background()

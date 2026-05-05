@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -29,8 +31,13 @@ The DSN may point at a local sqlite file or a remote postgres server.`,
 				prefix = os.Getenv(config.EnvPrefix)
 			}
 			if prefix == "" {
-				return fmt.Errorf("--prefix is required (e.g. `bd init --prefix yuklar`)")
+				return fmt.Errorf("--prefix is required (e.g. `bd init --prefix myproject`)")
 			}
+			// For multi-project on shared postgres: weave the project's
+			// prefix into the DSN as the search_path so all 10 projects can
+			// live in different schemas of the same database. SQLite
+			// (one-file-per-project) is unchanged.
+			dsn = withSearchPath(dsn, prefix)
 			cfg, err := config.Init(dsn)
 			if err != nil {
 				return err
@@ -60,8 +67,32 @@ The DSN may point at a local sqlite file or a remote postgres server.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dsn, "db", "", "DSN. Default: sqlite at .bd/bd.db. Examples:\n  --db postgres://user:pw@localhost/yuklar?sslmode=disable\n  --db sqlite:/tmp/test.db")
-	cmd.Flags().StringVar(&prefix, "prefix", "", "id prefix (REQUIRED, also via $BD_PREFIX)")
+	cmd.Flags().StringVar(&dsn, "db", "", "DSN. Default: sqlite at .bd/bd.db. Examples:\n  --db postgres://user@host/tracker?sslmode=disable   (search_path defaults to --prefix)\n  --db sqlite:/tmp/test.db")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "id prefix and postgres schema name (REQUIRED, also via $BD_PREFIX)")
 	cmd.Flags().StringVar(&idMode, "id-mode", "", "id allocation mode: hash (default) or counter")
 	return cmd
+}
+
+// withSearchPath returns dsn with `search_path=<prefix>` appended in the URL
+// query string, but only if (a) it is a postgres URI and (b) the URL does not
+// already specify search_path. Anything else (sqlite path, mysql DSN form) is
+// returned unchanged.
+func withSearchPath(dsn, prefix string) string {
+	if dsn == "" {
+		return dsn
+	}
+	if !(strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")) {
+		return dsn
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return dsn
+	}
+	q := u.Query()
+	if q.Has("search_path") {
+		return dsn // user already chose; respect it
+	}
+	q.Set("search_path", prefix)
+	u.RawQuery = q.Encode()
+	return u.String()
 }

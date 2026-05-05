@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -52,7 +53,14 @@ var (
 	ErrCycle         = errors.New("dependency would create a cycle")
 	ErrNoPrefix      = errors.New("no issue_prefix configured (run `bd init --prefix <name>`)")
 	ErrDepthExceeded = errors.New("hierarchy depth exceeded")
+	ErrBadSchemaName = errors.New("invalid schema name (only [a-z0-9_-]+ allowed)")
 )
+
+// schemaNameRE constrains postgres search_path values we accept. We must
+// interpolate this into DDL (CREATE SCHEMA / SET search_path) — quoting via
+// `"name"` would protect against injection, but we additionally enforce a
+// strict charset because schemas are also user-visible identifiers.
+var schemaNameRE = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
 //go:embed schema.sqlite.sql
 var schemaSQLite string
@@ -89,6 +97,24 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 			return nil, fmt.Errorf("sqlite pragmas: %w", err)
 		}
 	}
+	if driver == DriverPostgres {
+		// Multi-project: if the DSN names a search_path schema, ensure it
+		// exists and is set for this session. lib/pq honours search_path in
+		// the URL on connect, but the schema must be there first.
+		if schema, ok := postgresSearchPath(dsn); ok && schema != "" {
+			if !schemaNameRE.MatchString(schema) {
+				return nil, fmt.Errorf("%w: %q", ErrBadSchemaName, schema)
+			}
+			if _, err := db.ExecContext(ctx,
+				fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %q`, schema)); err != nil {
+				return nil, fmt.Errorf("create schema %q: %w", schema, err)
+			}
+			if _, err := db.ExecContext(ctx,
+				fmt.Sprintf(`SET search_path TO %q`, schema)); err != nil {
+				return nil, fmt.Errorf("set search_path: %w", err)
+			}
+		}
+	}
 	s := &Store{db: db, driver: driver}
 	switch driver {
 	case DriverSQLite:
@@ -100,6 +126,24 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// PostgresSearchPathForTest exposes the internal helper for unit tests.
+func PostgresSearchPathForTest(dsn string) (string, bool) { return postgresSearchPath(dsn) }
+
+// postgresSearchPath returns the value of `search_path` from a postgres URI
+// DSN, if any. Returns ("", false) when the DSN has no such param or isn't a
+// URI form.
+func postgresSearchPath(dsn string) (string, bool) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", false
+	}
+	q := u.Query()
+	if !q.Has("search_path") {
+		return "", false
+	}
+	return q.Get("search_path"), true
 }
 
 func parseDSN(dsn string) (Driver, string, error) {
