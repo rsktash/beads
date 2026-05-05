@@ -46,14 +46,19 @@ class PgAdapter {
   static async create(dsn) {
     const a = new PgAdapter();
     a.driver = 'postgres';
-    a.pool = new Pool({ connectionString: dsn });
-    // Honour search_path from URL — pg already does this, but be explicit.
+
+    // node-postgres does NOT recognise `?search_path=...` URL params (unlike
+    // Go's lib/pq). To set it for every pooled connection without races, fold
+    // it into the libpq `options` startup parameter, which pg DOES forward.
     const u = new URL(dsn);
     a.searchPath = u.searchParams.get('search_path') || '';
     if (a.searchPath) {
-      // pg sets search_path via the URL param on each connection; nothing
-      // else needed.
+      u.searchParams.delete('search_path');
+      const existing = u.searchParams.get('options') || '';
+      const suffix = `-c search_path=${a.searchPath}`;
+      u.searchParams.set('options', existing ? `${existing} ${suffix}` : suffix);
     }
+    a.pool = new Pool({ connectionString: u.toString() });
     return a;
   }
 
