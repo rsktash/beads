@@ -1,5 +1,7 @@
 /bd
 /.beads/
+/.bd/
+.envrc
 *.db
 *.sqlite
 *.sqlite3
