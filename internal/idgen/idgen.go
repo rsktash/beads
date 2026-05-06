@@ -114,8 +114,8 @@ func ChildID(parent string, n int) string {
 	return fmt.Sprintf("%s.%d", parent, n)
 }
 
-// MaxHierarchyDepth is the cap upstream imposes (3 levels: bd-X.1.2.3 max).
-const MaxHierarchyDepth = 3
+// MaxHierarchyDepth caps allocated id depth (5 levels: bd-X.1.2.3.4.5 max).
+const MaxHierarchyDepth = 5
 
 // HierarchyDepth counts dots in id (depth 0 = root, 1 = child, 2 = grandchild).
 func HierarchyDepth(id string) int {
