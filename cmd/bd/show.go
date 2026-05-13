@@ -55,13 +55,22 @@ func newShowCmd() *cobra.Command {
 			}
 
 			out := bufferedWriter(maxBytes)
+			multi := len(args) > 1
+			failed := 0
 
 			if cc.json {
 				rows := make([]any, 0, len(args))
 				for _, id := range args {
 					row, err := buildShowJSON(cc, id, opts)
 					if err != nil {
-						return err
+						if !multi {
+							return err
+						}
+						// Multi-id: print one id-prefixed error per failure,
+						// keep going so the caller still gets the good rows.
+						fmt.Fprintf(os.Stderr, "error: %s: %v\n", id, err)
+						failed++
+						continue
 					}
 					rows = append(rows, row)
 				}
@@ -69,16 +78,33 @@ func newShowCmd() *cobra.Command {
 					return err
 				}
 			} else {
-				for idx, id := range args {
-					if idx > 0 {
+				first := true
+				for _, id := range args {
+					var buf bytes.Buffer
+					if err := printShowHuman(&buf, cc, id, opts); err != nil {
+						if !multi {
+							return err
+						}
+						fmt.Fprintf(os.Stderr, "error: %s: %v\n", id, err)
+						failed++
+						continue
+					}
+					if !first {
 						fmt.Fprintln(out, "\n---")
 					}
-					if err := printShowHuman(out, cc, id, opts); err != nil {
-						return err
-					}
+					first = false
+					out.Write(buf.Bytes())
 				}
 			}
-			return out.flush(os.Stdout)
+			if err := out.flush(os.Stdout); err != nil {
+				return err
+			}
+			if failed > 0 {
+				// Surface partial-success as a non-zero exit. main.go writes
+				// the summary to stderr; the per-id errors above precede it.
+				return fmt.Errorf("%d of %d beads failed", failed, len(args))
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&section, "section", "", "show only one markdown ## section (slug match) of the description")
