@@ -15,6 +15,7 @@ func newListCmd() *cobra.Command {
 		priority  int
 		limit     int
 		all       bool
+		full      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -54,7 +55,10 @@ func newListCmd() *cobra.Command {
 				return err
 			}
 			if cc.json {
-				return writeJSON(out)
+				if full {
+					return writeJSON(out)
+				}
+				return writeJSON(slimIssues(out))
 			}
 			printIssueTable(out)
 			return nil
@@ -66,5 +70,6 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&priority, "priority", "p", 0, "filter by priority")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 0, "max rows")
 	cmd.Flags().BoolVar(&all, "all", false, "include all statuses, not just open")
+	cmd.Flags().BoolVar(&full, "full", false, "emit full Issue rows in --json (default: id/title/status/priority/type/assignee)")
 	return cmd
 }

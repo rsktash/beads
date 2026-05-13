@@ -23,7 +23,8 @@ state, not free-form notes.
 ## Daily flow
 
 - ` + "`bd ready`" + ` — what's available to work on (no open blockers).
-- ` + "`bd show <id>`" + ` — full issue + deps + comments.
+- ` + "`bd show <id>`" + ` — header + deps. Long descriptions print an
+  outline; pass ` + "`--full`" + ` for the body or ` + "`--section <slug>`" + ` for one heading.
 - ` + "`bd update <id> --claim`" + ` — assign yourself + set in_progress.
 - ` + "`bd close <id> --reason \"...\"`" + ` — when done.
 
@@ -34,12 +35,20 @@ state, not free-form notes.
 - ` + "`bd update <id> --body-file path.md`" + ` — set description from file.
 - ` + "`bd dep add <issue> <depends-on>`" + ` — link a dependency.
 
-## Inspect
+## Reading (token-aware)
 
+- ` + "`bd get <id> <field>`" + ` — single field, raw, no jq. ` + "`bd get <id> fields`" + ` lists names.
+- ` + "`bd show <id> --full`" + ` — full description body (also ` + "`--head N`" + `, ` + "`--tail N`" + `, ` + "`--lines START-END`" + `).
+- ` + "`bd show id1 id2 id3 --full`" + ` — batch read several beads in one call.
+- ` + "`bd show <id> --include comments`" + ` — comment bodies (` + "`--json`" + ` returns ` + "`comments_count`" + ` only by default).
 - ` + "`bd children <id>`" + ` — direct children. Add ` + "`-r`" + ` for full tree.
 - ` + "`bd search 'query'`" + ` — substring across title/description/notes.
+
+## Lists
+
 - ` + "`bd list -s open -t bug`" + ` — filter by status/type.
-- ` + "`bd --json show <id>`" + ` — JSON output for any read command.
+- ` + "`bd ready --json`" + ` / ` + "`bd list --json`" + ` — slim DTOs (id/title/status/priority/type/assignee).
+  Add ` + "`--full`" + ` for full Issue rows. ` + "`bd ready --limit N`" + ` caps results.
 
 ## Comments + memory
 

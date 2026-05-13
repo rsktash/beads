@@ -5,7 +5,11 @@ import (
 )
 
 func newReadyCmd() *cobra.Command {
-	var parent string
+	var (
+		parent string
+		full   bool
+		limit  int
+	)
 	cmd := &cobra.Command{
 		Use:   "ready",
 		Short: "List beads with no open blockers (and not deferred/ephemeral). --parent <id> scopes to descendants of that issue.",
@@ -39,13 +43,21 @@ func newReadyCmd() *cobra.Command {
 				}
 				out = filtered
 			}
+			if limit > 0 && len(out) > limit {
+				out = out[:limit]
+			}
 			if cc.json {
-				return writeJSON(out)
+				if full {
+					return writeJSON(out)
+				}
+				return writeJSON(slimIssues(out))
 			}
 			printIssueTable(out)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&parent, "parent", "", "scope to descendants of this issue id (parent-child)")
+	cmd.Flags().BoolVar(&full, "full", false, "emit full Issue rows in --json (default: id/title/status/priority/type/assignee)")
+	cmd.Flags().IntVarP(&limit, "limit", "n", 0, "cap returned rows (0 = unlimited)")
 	return cmd
 }
