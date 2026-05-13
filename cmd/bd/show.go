@@ -137,10 +137,12 @@ func buildShowJSON(cc *cmdCtx, id string, opts showOpts) (any, error) {
 
 	type body struct {
 		*beadsIssueAlias
-		Dependencies  any `json:"dependencies,omitempty"`
-		Comments      any `json:"comments,omitempty"`
-		CommentsCount *int `json:"comments_count,omitempty"`
-		Outline       any `json:"description_outline,omitempty"`
+		Dependencies       any    `json:"dependencies,omitempty"`
+		Comments           any    `json:"comments,omitempty"`
+		CommentsCount      *int   `json:"comments_count,omitempty"`
+		Outline            any    `json:"description_outline,omitempty"`
+		DescriptionSection string `json:"description_section,omitempty"`
+		DescriptionSlice   string `json:"description_slice,omitempty"`
 	}
 	out := body{beadsIssueAlias: (*beadsIssueAlias)(i)}
 
@@ -187,10 +189,18 @@ func buildShowJSON(cc *cmdCtx, id string, opts showOpts) (any, error) {
 	desc := i.Description
 	switch {
 	case opts.section != "":
-		picked, _ := extractSection(desc, opts.section)
+		picked, ok := extractSection(desc, opts.section)
+		if !ok {
+			return nil, sectionNotFoundError(id, desc, opts.section)
+		}
 		i.Description = opts.lineSlice.apply(picked)
+		out.DescriptionSection = opts.section
+		if s := opts.lineSlice.describe(); s != "" {
+			out.DescriptionSlice = s
+		}
 	case !opts.lineSlice.empty():
 		i.Description = opts.lineSlice.apply(desc)
+		out.DescriptionSlice = opts.lineSlice.describe()
 	case opts.outline || (!opts.full && len(desc) >= outlineDefaultThreshold):
 		ol := describeOutline(desc)
 		out.Outline = ol
@@ -237,18 +247,11 @@ func printShowHuman(w io.Writer, cc *cmdCtx, id string, opts showOpts) error {
 	if opts.section != "" {
 		body, ok := extractSection(desc, opts.section)
 		if !ok {
-			fmt.Fprintf(w, "\n[section %q not found]\n", opts.section)
-			if hs := outlineHeadings(desc); len(hs) > 0 {
-				fmt.Fprintln(w, "available sections:")
-				for _, h := range hs {
-					fmt.Fprintf(w, "  %s\n", h.slug)
-				}
-			}
-		} else {
-			body = opts.lineSlice.apply(body)
-			if body != "" {
-				fmt.Fprintln(w, "\n"+body)
-			}
+			return sectionNotFoundError(id, desc, opts.section)
+		}
+		body = opts.lineSlice.apply(body)
+		if body != "" {
+			fmt.Fprintln(w, "\n"+body)
 		}
 	} else if !opts.lineSlice.empty() {
 		body := opts.lineSlice.apply(desc)
@@ -288,7 +291,7 @@ func printShowHuman(w io.Writer, cc *cmdCtx, id string, opts showOpts) error {
 	}
 	if len(cs) > 0 {
 		if opts.include.comments {
-			fmt.Fprintln(w, "\ncomments:")
+			fmt.Fprintln(w, "\n--- comments ---")
 			for _, c := range cs {
 				fmt.Fprintf(w, "  [%s] %s: %s\n", c.CreatedAt.Format("2006-01-02 15:04"), c.Author, c.Text)
 			}
@@ -355,6 +358,22 @@ func describeOutline(desc string) []map[string]any {
 	return out
 }
 
+// sectionNotFoundError builds the user-facing error returned when --section
+// doesn't match. Cobra writes the error to stderr and main.go sets exit=1.
+// We include the available slug list so the caller can fix the typo without
+// re-running `bd show <id>` to discover the outline.
+func sectionNotFoundError(id, desc, requested string) error {
+	hs := outlineHeadings(desc)
+	if len(hs) == 0 {
+		return fmt.Errorf("section %q not found in %s (the description has no ## headings)", requested, id)
+	}
+	slugs := make([]string, len(hs))
+	for i, h := range hs {
+		slugs[i] = h.slug
+	}
+	return fmt.Errorf("section %q not found in %s. available: %s", requested, id, strings.Join(slugs, ", "))
+}
+
 // extractSection returns the body of the section whose slug matches `key`
 // (substring match in priority order: exact slug, prefix slug, substring on
 // heading). The body excludes the heading line itself.
@@ -411,6 +430,27 @@ type lineSlice struct {
 
 func (s lineSlice) empty() bool {
 	return s.start == 0 && s.end == 0 && s.head == 0 && s.tail == 0
+}
+
+// describe renders the slice as a short human/JSON-friendly string. Used by
+// `bd show --json` to populate description_slice so consumers can tell the
+// description is an excerpt rather than the full body.
+func (s lineSlice) describe() string {
+	switch {
+	case s.head > 0:
+		return fmt.Sprintf("head %d", s.head)
+	case s.tail > 0:
+		return fmt.Sprintf("tail %d", s.tail)
+	case s.start > 0 && s.end > 0 && s.start == s.end:
+		return fmt.Sprintf("line %d", s.start)
+	case s.start > 0 && s.end > 0:
+		return fmt.Sprintf("lines %d-%d", s.start, s.end)
+	case s.start > 0:
+		return fmt.Sprintf("lines %d-", s.start)
+	case s.end > 0:
+		return fmt.Sprintf("lines -%d", s.end)
+	}
+	return ""
 }
 
 func (s lineSlice) apply(body string) string {
