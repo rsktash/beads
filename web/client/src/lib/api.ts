@@ -77,6 +77,7 @@ class ProjectApi {
       dependencies: Dependency[];
       comments: Comment[];
       blocked_by: { id: string; title: string }[];
+      blocks: { id: string; title: string }[];
       children: { id: string; title: string; status: string; priority: number; issue_type: string }[];
     }>("GET", this.path(`/issues/${encodeURIComponent(id)}`));
 

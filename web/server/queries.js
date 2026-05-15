@@ -127,6 +127,23 @@ export async function listBlockedBy(db, issueId, limit = 5) {
   return rows;
 }
 
+// listBlocks returns up to `limit` issue ids/titles currently blocked BY the
+// given issue (i.e., rows where this issue is depends_on_id, type='blocks').
+// Mirror of listBlockedBy with reversed direction; powers the "Blocks" card
+// in the issue-detail sidebar.
+export async function listBlocks(db, issueId, limit = 10) {
+  const rows = await db.all(
+    `SELECT b.id, b.title FROM dependencies d
+       JOIN issues b ON b.id = d.issue_id
+       WHERE d.depends_on_id = ? AND d.type = 'blocks'
+         AND b.status NOT IN ('closed', 'pinned')
+       ORDER BY b.created_at
+       LIMIT ${Number(limit) | 0}`,
+    [issueId],
+  );
+  return rows;
+}
+
 // listChildren returns the parent-child children of an issue (where THIS
 // issue is the depends_on_id, type='parent-child'). Used by the metadata
 // sidebar's Children card.

@@ -7,6 +7,7 @@ import {
   deleteComment,
   getIssue,
   listBlockedBy,
+  listBlocks,
   listChildren,
   listComments,
   listDependencies,
@@ -61,16 +62,18 @@ export function issuesRouter() {
     const id = c.req.param('id');
     const issue = await getIssue(db, id);
     if (!issue) return c.json({ error: 'not found' }, 404);
-    const [labels, deps, comments, blockedBy, children] = await Promise.all([
+    const [labels, deps, comments, blockedBy, blocks, children] = await Promise.all([
       listLabels(db, id),
       listDependencies(db, id),
       listComments(db, id),
       listBlockedBy(db, id, 5),
+      listBlocks(db, id, 10),
       listChildren(db, id),
     ]);
     return c.json({
       issue, labels, dependencies: deps, comments,
       blocked_by: blockedBy,
+      blocks,
       children,
     });
   });

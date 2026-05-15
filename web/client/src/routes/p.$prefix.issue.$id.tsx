@@ -61,7 +61,7 @@ function IssueDetail() {
   if (q.error)     return <div className="text-red-600">{(q.error as Error).message}</div>;
   if (!q.data)     return null;
 
-  const { issue, labels, dependencies, comments, blocked_by, children } = q.data;
+  const { issue, labels, dependencies, comments, blocked_by, blocks, children } = q.data;
 
   return (
     <div className="flex h-full -m-6">
@@ -161,6 +161,7 @@ function IssueDetail() {
         issue={issue}
         labels={labels}
         blocked_by={blocked_by}
+        blocks={blocks}
         children_={children}
         onAddLabel={(l) => addLabel.mutate(l)}
         onRemoveLabel={(l) => removeLabel.mutate(l)}
@@ -291,11 +292,12 @@ function Comments({
 }
 
 function MetadataSidebar({
-  issue, labels, blocked_by, children_, onAddLabel, onRemoveLabel,
+  issue, labels, blocked_by, blocks, children_, onAddLabel, onRemoveLabel,
 }: {
   issue: Issue;
   labels: string[];
   blocked_by: { id: string; title: string }[];
+  blocks: { id: string; title: string }[];
   children_: { id: string; title: string; status: string; priority: number; issue_type: string }[];
   onAddLabel: (l: string) => void;
   onRemoveLabel: (l: string) => void;
@@ -450,6 +452,25 @@ function MetadataSidebar({
               </li>
             ))}
           </ul>
+        </Meta>
+      )}
+
+      {blocks && blocks.length > 0 && (
+        <Meta label="Blocks">
+          <div className="space-y-1">
+            {blocks.map((b) => (
+              <Link
+                key={b.id}
+                to="/issue/$id"
+                params={{ id: b.id }}
+                className="block text-xs font-mono"
+                style={{ color: "var(--color-accent)" }}
+                title={b.title}
+              >
+                {b.id}
+              </Link>
+            ))}
+          </div>
         </Meta>
       )}
 
