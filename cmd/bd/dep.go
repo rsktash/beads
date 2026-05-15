@@ -14,11 +14,24 @@ func newDepCmd() *cobra.Command {
 	return dep
 }
 
+// depDisplayLabel returns the verb to render between issue_id and depends_on_id
+// for printable output. The stored `blocks` type means "issue_id is BLOCKED BY
+// depends_on_id" (depends_on_id is the blocker — see the ready query in
+// sql/queries.sql). Rendering the row as `A -blocks-> B` reads naturally as
+// "A blocks B", which is the inverse of the truth. Display `blocked-by`
+// instead. Other type names already read correctly with issue_id on the left.
+func depDisplayLabel(t beads.DependencyType) string {
+	if t == beads.DepBlocks {
+		return "blocked-by"
+	}
+	return string(t)
+}
+
 func newDepAddCmd() *cobra.Command {
 	var typeStr, threadID string
 	cmd := &cobra.Command{
 		Use:   "add <issue> <depends-on>",
-		Short: "Add dependency: <issue> --type--> <depends-on>",
+		Short: "Add dependency: <issue> depends on <depends-on> (with --type). For blocks-type, <depends-on> is the blocker.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cc, err := openStore(cmd)
@@ -37,7 +50,7 @@ func newDepAddCmd() *cobra.Command {
 			if err := cc.store.AddDependency(cc.ctx, d); err != nil {
 				return err
 			}
-			fmt.Printf("%s -%s-> %s\n", args[0], dt, args[1])
+			fmt.Printf("%s -%s-> %s\n", args[0], depDisplayLabel(dt), args[1])
 			return nil
 		},
 	}
@@ -81,7 +94,7 @@ func newDepListCmd() *cobra.Command {
 				return writeJSON(deps)
 			}
 			for _, d := range deps {
-				fmt.Printf("%s -%s-> %s\n", d.IssueID, d.Type, d.DependsOnID)
+				fmt.Printf("%s -%s-> %s\n", d.IssueID, depDisplayLabel(d.Type), d.DependsOnID)
 			}
 			return nil
 		},
