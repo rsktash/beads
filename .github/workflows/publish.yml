@@ -17,10 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No registry-url: it writes an .npmrc with `_authToken=${NODE_AUTH_TOKEN}`,
+      # and an EMPTY token blocks npm from falling back to OIDC Trusted Publishing
+      # (the registry defaults to npmjs.org anyway).
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://registry.npmjs.org
 
       # Trusted Publishing (OIDC) requires npm >= 11.5.1; Node 20 ships npm 10.x.
       - run: npm install -g npm@latest
