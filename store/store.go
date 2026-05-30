@@ -496,6 +496,82 @@ func (s *Store) CreateIssue(ctx context.Context, i *beads.Issue) error {
 	return s.insertIssue(ctx, i)
 }
 
+// CreateChild atomically allocates a hierarchical id under parent, inserts the
+// issue, links the parent-child edge, and applies labels — all inside ONE
+// transaction. Without this, a failure between child-id allocation and the
+// insert leaves the child counter advanced with no bead (a permanent gap in the
+// sibling sequence), or an orphan bead with no parent edge. All-or-nothing.
+func (s *Store) CreateChild(ctx context.Context, parent string, i *beads.Issue, labels []string) error {
+	if idgen.HierarchyDepth(parent) >= idgen.MaxHierarchyDepth {
+		return ErrDepthExceeded
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// A tx-scoped view of the store: every Store method dispatches through
+	// s.sqlite / s.pg, so swapping just that field runs the whole unit inside
+	// the transaction without rewriting each query method.
+	ts := *s
+	switch s.driver {
+	case DriverSQLite:
+		ts.sqlite = s.sqlite.WithTx(tx)
+	case DriverPostgres:
+		ts.pg = s.pg.WithTx(tx)
+	}
+
+	if _, err := ts.GetIssue(ctx, parent); err != nil {
+		return fmt.Errorf("parent %s: %w", parent, err)
+	}
+	var n int
+	switch s.driver {
+	case DriverSQLite:
+		v, err := ts.sqlite.NextChildIndex(ctx, parent)
+		if err != nil {
+			return err
+		}
+		n = int(v)
+	case DriverPostgres:
+		v, err := ts.pg.NextChildIndex(ctx, parent)
+		if err != nil {
+			return err
+		}
+		n = int(v)
+	}
+	i.ID = idgen.ChildID(parent, n)
+
+	if err := ts.CreateIssue(ctx, i); err != nil {
+		return err
+	}
+	if err := ts.AddDependency(ctx, beads.Dependency{
+		IssueID:     i.ID,
+		DependsOnID: parent,
+		Type:        beads.DepParentChild,
+		CreatedBy:   i.CreatedBy,
+	}); err != nil {
+		return fmt.Errorf("link parent-child %s -> %s: %w", i.ID, parent, err)
+	}
+	for _, l := range labels {
+		if err := ts.AddLabel(ctx, i.ID, l); err != nil {
+			return fmt.Errorf("label %s: %w", l, err)
+		}
+	}
+	i.Labels = labels
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 func (s *Store) allocateID(ctx context.Context, i *beads.Issue) (string, error) {
 	prefix, err := s.Prefix(ctx)
 	if err != nil {

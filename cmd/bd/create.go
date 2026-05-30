@@ -78,38 +78,26 @@ func newCreateCmd() *cobra.Command {
 				Ephemeral:          ephemeral,
 				Sender:             sender,
 			}
-			// --parent: allocate a hierarchical id "<parent>.N" via the
-			// child_counters table (atomic) and auto-add the parent-child
-			// dependency. Mirrors upstream's behaviour.
+			// --parent: allocate a hierarchical id "<parent>.N", insert the
+			// issue, link the parent-child edge, and apply labels — all in ONE
+			// transaction (store.CreateChild) so a failed insert can't leave the
+			// child counter advanced with no bead (a gap) or an orphan bead.
 			if parentID != "" {
-				if _, err := cc.store.GetIssue(cc.ctx, parentID); err != nil {
-					return fmt.Errorf("parent %s: %w", parentID, err)
+				i.CreatedBy = assigneeFromEnv()
+				if err := cc.store.CreateChild(cc.ctx, parentID, i, labels); err != nil {
+					return err
 				}
-				childID, err := cc.store.NextChildID(cc.ctx, parentID)
-				if err != nil {
-					return fmt.Errorf("alloc child id under %s: %w", parentID, err)
+			} else {
+				if err := cc.store.CreateIssue(cc.ctx, i); err != nil {
+					return err
 				}
-				i.ID = childID
-			}
-			if err := cc.store.CreateIssue(cc.ctx, i); err != nil {
-				return err
-			}
-			if parentID != "" {
-				if err := cc.store.AddDependency(cc.ctx, beads.Dependency{
-					IssueID:     i.ID,
-					DependsOnID: parentID,
-					Type:        beads.DepParentChild,
-					CreatedBy:   assigneeFromEnv(),
-				}); err != nil {
-					return fmt.Errorf("link parent-child %s -> %s: %w", i.ID, parentID, err)
+				for _, l := range labels {
+					if err := cc.store.AddLabel(cc.ctx, i.ID, l); err != nil {
+						return fmt.Errorf("label %s: %w", l, err)
+					}
 				}
+				i.Labels = labels
 			}
-			for _, l := range labels {
-				if err := cc.store.AddLabel(cc.ctx, i.ID, l); err != nil {
-					return fmt.Errorf("label %s: %w", l, err)
-				}
-			}
-			i.Labels = labels
 			if cc.json {
 				return writeJSON(i)
 			}
