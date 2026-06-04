@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { api } from "../lib/api";
-import { Link } from "../lib/router";
+import { Link, useNavigate } from "../lib/router";
 import { PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
 import { CopyId } from "../components/CopyId";
 import { getAvatarColor, getInitials } from "../lib/avatar";
@@ -100,6 +100,7 @@ function SkeletonRow() {
 }
 
 function ListComponent() {
+  const navigate = useNavigate();
   const [status, setStatus] = useState("");
   const [type, setType] = useState("");
   const [search, setSearch] = useState("");
@@ -171,8 +172,9 @@ function ListComponent() {
               {issues.map((i) => (
                 <tr
                   key={i.id}
-                  className="hover:bg-stone-50"
+                  className="hover:bg-stone-50 cursor-pointer"
                   style={{ borderTop: "1px solid var(--color-border-subtle)" }}
+                  onClick={() => navigate({ to: "/issue/$id", params: { id: i.id } })}
                 >
                   <Td>
                     <span className="inline-flex items-center gap-2">
