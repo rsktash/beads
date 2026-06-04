@@ -28,8 +28,17 @@ export function getAvatarColor(name: string): string {
 
 export function getInitials(name: string): string {
   if (!name) return "?";
-  const parts = name.trim().split(/[\s._-]+/).filter(Boolean);
-  if (parts.length === 0) return name.slice(0, 1).toUpperCase();
+  // Agent assignee convention: "Human / Model Family X.Y" with an optional
+  // "(subagent)" suffix, e.g. "Rustam / Claude Opus 4.8 (subagent)" → "RO",
+  // "Rustam / Claude Sonnet 4.6" → "RS". Plain names fall through below.
+  const cleaned = name.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const [human, model] = cleaned.split(/\s*\/\s*/, 2);
+  if (human && model) {
+    const family = model.replace(/^claude\s+/i, "").match(/[a-z]/i);
+    if (family) return (human[0] + family[0]).toUpperCase();
+  }
+  const parts = cleaned.split(/[\s._-]+/).filter(Boolean);
+  if (parts.length === 0) return name.trim().slice(0, 1).toUpperCase() || "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
