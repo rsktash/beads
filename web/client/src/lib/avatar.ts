@@ -19,11 +19,21 @@ const PALETTE = [
 
 export function getAvatarColor(name: string): string {
   if (!name) return "#9CA3AF";
-  let hash = 0;
+  // FNV-1a with a murmur3-style finalizer. The old `hash * 31 + char` mod 12
+  // had alternating character weights (31² ≡ 1 mod 12), so similar full names
+  // — e.g. "X / Opus 4.8" vs "X / Opus 4.8 (subagent)" — collided into the
+  // same palette bucket. The avalanche step makes every character count.
+  let h = 0x811c9dc5;
   for (let i = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+    h ^= name.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
   }
-  return PALETTE[hash % PALETTE.length];
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return PALETTE[(h >>> 0) % PALETTE.length];
 }
 
 export function getInitials(name: string): string {
