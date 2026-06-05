@@ -8,7 +8,7 @@ import { getAvatarColor, getInitials } from "../lib/avatar";
 //   • coloured 3px left border keyed to issue_type
 //   • parent breadcrumb + monospace id at top
 //   • title (line-clamp 2)
-//   • optional "blocked by N" indicator
+//   • optional "blocked by <id> + n" indicator (oldest open blocker first)
 //   • bottom meta row: type + priority + children counter + comment counter
 //     + assignee avatar (colour deterministic from name)
 export function IssueCard({
@@ -49,7 +49,7 @@ export function IssueCard({
           {issue.title}
         </p>
 
-        {/* blocked-by indicator */}
+        {/* blocked-by indicator: "blocked by <id>" or "blocked by <id> + n" */}
         {issue.blocked_by_count > 0 && (
           <div className="flex items-center gap-1 mb-2">
             <BlockedIcon />
@@ -59,8 +59,12 @@ export function IssueCard({
                 background: "color-mix(in srgb, var(--color-status-blocked) 12%, transparent)",
                 color: "var(--color-status-blocked)",
               }}
+              title={issue.blocked_by_title || undefined}
             >
-              blocked by {issue.blocked_by_count}
+              blocked by {issue.blocked_by_id || issue.blocked_by_count}
+              {issue.blocked_by_id && issue.blocked_by_count > 1
+                ? ` + ${issue.blocked_by_count - 1}`
+                : ""}
             </span>
           </div>
         )}

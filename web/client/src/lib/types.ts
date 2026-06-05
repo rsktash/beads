@@ -58,6 +58,8 @@ export interface Issue {
   total_children: number;
   closed_children: number;
   blocked_by_count: number;
+  blocked_by_id: string;    // oldest open blocker (empty when none)
+  blocked_by_title: string;
   comment_count: number;
 }
 

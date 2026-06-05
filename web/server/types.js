@@ -49,6 +49,8 @@ export function rowToIssue(r) {
     total_children: r.total_children != null ? Number(r.total_children) : 0,
     closed_children: r.closed_children != null ? Number(r.closed_children) : 0,
     blocked_by_count: r.blocked_by_count != null ? Number(r.blocked_by_count) : 0,
+    blocked_by_id: r.blocked_by_id || '',
+    blocked_by_title: r.blocked_by_title || '',
     comment_count: r.comment_count != null ? Number(r.comment_count) : 0,
   };
 }

@@ -13,7 +13,9 @@ export async function getConfigValue(db, key) {
 
 // Computed columns shared by list/ready/detail. Keeps the JSON shape stable
 // across endpoints (parent_id, parent_title, total_children, closed_children,
-// blocked_by_count, comment_count).
+// blocked_by_count, blocked_by_id, blocked_by_title, comment_count).
+// blocked_by_id/title identify the oldest open blocker (same ordering as
+// listBlockedBy) so cards can render "blocked by <id> + n".
 const ENRICHED_COMPUTED = `
   (SELECT depends_on_id FROM dependencies d
     WHERE d.issue_id = i.id AND d.type = 'parent-child' LIMIT 1) AS parent_id,
@@ -27,6 +29,14 @@ const ENRICHED_COMPUTED = `
   (SELECT COUNT(*) FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
     WHERE d.issue_id = i.id AND d.type = 'blocks'
       AND b.status NOT IN ('closed', 'pinned')) AS blocked_by_count,
+  (SELECT b.id FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
+    WHERE d.issue_id = i.id AND d.type = 'blocks'
+      AND b.status NOT IN ('closed', 'pinned')
+    ORDER BY b.created_at LIMIT 1) AS blocked_by_id,
+  (SELECT b.title FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
+    WHERE d.issue_id = i.id AND d.type = 'blocks'
+      AND b.status NOT IN ('closed', 'pinned')
+    ORDER BY b.created_at LIMIT 1) AS blocked_by_title,
   (SELECT COUNT(*) FROM comments c WHERE c.issue_id = i.id) AS comment_count
 `;
 
