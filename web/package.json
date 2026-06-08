@@ -1,6 +1,6 @@
 {
   "name": "@rsktash/beads-ui",
-  "version": "0.10.6",
+  "version": "0.10.7",
   "description": "Web UI for beads issue tracker",
   "type": "module",
   "license": "MIT",
