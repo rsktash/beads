@@ -27,6 +27,59 @@ func depDisplayLabel(t beads.DependencyType) string {
 	return string(t)
 }
 
+// depRelation renders a dependency edge from the perspective of issue `id` as
+// a natural verb phrase plus the other issue's id (e.g. "blocked by bd-12").
+// Stored edges are `IssueID <type> DependsOnID`. Two types read INVERTED from
+// their literal name and are the source of the "id -> blocks X" misreading
+// trap: `blocks` means IssueID is BLOCKED BY DependsOnID (DependsOnID is the
+// blocker — see the ready query in sql/queries.sql), and `parent-child` means
+// IssueID is the CHILD of DependsOnID (see get.go/close.go). Rendering the
+// relationship as an explicit, direction-aware verb removes the ambiguity that
+// a bare arrow + raw type name creates. `forward` is true when `id` sits on the
+// left of the stored edge (id == IssueID).
+func depRelation(id string, d beads.Dependency) (verb, other string) {
+	forward := d.IssueID == id
+	if forward {
+		other = d.DependsOnID
+	} else {
+		other = d.IssueID
+	}
+	switch d.Type {
+	case beads.DepBlocks:
+		if forward {
+			return "blocked by", other
+		}
+		return "blocks", other
+	case beads.DepParentChild:
+		if forward {
+			return "child of", other
+		}
+		return "parent of", other
+	case beads.DepDuplicates:
+		if forward {
+			return "duplicates", other
+		}
+		return "duplicated by", other
+	case beads.DepSupersedes:
+		if forward {
+			return "supersedes", other
+		}
+		return "superseded by", other
+	case beads.DepRepliesTo:
+		if forward {
+			return "replies to", other
+		}
+		return "replied to by", other
+	case beads.DepDiscoveredBy:
+		if forward {
+			return "discovered by", other
+		}
+		return "discovered", other
+	default: // DepRelatesTo and any future symmetric type
+		return "related to", other
+	}
+}
+
 func newDepAddCmd() *cobra.Command {
 	var typeStr, threadID string
 	cmd := &cobra.Command{

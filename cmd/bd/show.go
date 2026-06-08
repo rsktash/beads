@@ -301,11 +301,11 @@ func printShowHuman(w io.Writer, cc *cmdCtx, id string, opts showOpts) error {
 	if len(deps) > 0 {
 		fmt.Fprintln(w, "\ndependencies:")
 		for _, d := range deps {
-			arrow, other := "->", d.DependsOnID
-			if d.DependsOnID == id {
-				arrow, other = "<-", d.IssueID
-			}
-			fmt.Fprintf(w, "  %s %s %s\n", arrow, d.Type, other)
+			// Render each edge from the perspective of the shown issue using a
+			// direction-explicit verb so it can't be misread as the inverse
+			// (see depRelation). e.g. "blocked by bd-12", "blocks bd-30".
+			verb, other := depRelation(id, d)
+			fmt.Fprintf(w, "  %s %s\n", verb, other)
 		}
 	}
 
