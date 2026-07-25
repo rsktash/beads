@@ -4,10 +4,27 @@
 // in the DB's `config` table so all clients of the same DB see the same
 // project settings.
 //
+// The project is resolved ONCE, and every project-relative path derives from that one
+// answer. Before, the .bd directory was found by walking up while .env was looked for
+// only relative to cwd; the two disagreed anywhere cwd was not the project root, so from
+// a git worktree bd would resolve a DSN and then fail to find its password.
+//
+// Resolution order for the .bd directory:
+//  1. $BD_DIR override
+//  2. walk up from cwd
+//  3. the MAIN worktree of the enclosing git repository, if any — this is what makes bd
+//     work from a linked worktree created OUTSIDE the repo, which step 2 cannot reach
+//
 // Resolution order for the DSN:
 //  1. --db / $BD_DB explicit DSN
-//  2. db= line in .bd/config (walked up from cwd, or $BD_DIR override)
+//  2. db= line in <.bd>/config
 //  3. default: .bd/bd.db (sqlite)
+//
+// Resolution order for the DSN password (never stored in .bd/config):
+//  1. $BD_DB_PASSWORD
+//  2. ./.env relative to cwd
+//  3. <project root>/.bd/.env
+//  4. <project root>/.env
 package config
 
 import (
@@ -21,6 +38,7 @@ import (
 
 const (
 	dirName     = ".bd"
+	gitName     = ".git"
 	configName  = "config"
 	envFileName = ".env"
 	defaultName = "bd.db"
@@ -36,9 +54,12 @@ const (
 )
 
 type Config struct {
-	DSN        string // resolved DB connection string (with password if applicable)
-	BeadDir    string // .bd directory path (may be empty if unresolved)
-	DisplayDSN string // sanitised DSN safe for logs/stdout (no password)
+	DSN     string // resolved DB connection string (with password if applicable)
+	BeadDir string // .bd directory path (may be empty if unresolved)
+	// ProjectRoot is the directory containing .bd — the single anchor every other
+	// project-relative path derives from. Empty when BeadDir is.
+	ProjectRoot string
+	DisplayDSN  string // sanitised DSN safe for logs/stdout (no password)
 }
 
 // Resolve returns the connection config for the active project. It does NOT
@@ -58,6 +79,7 @@ func Resolve(explicitDSN string) (*Config, error) {
 	}
 	if found {
 		cfg.BeadDir = dir
+		cfg.ProjectRoot = filepath.Dir(dir)
 		if cfg.DSN == "" {
 			dsn, err := readDSNFromFile(dir)
 			if err != nil {
@@ -77,15 +99,26 @@ func Resolve(explicitDSN string) (*Config, error) {
 	return cfg, nil
 }
 
-// lookupDBPassword resolves the store DSN password from $BD_DB_PASSWORD or a
-// .env file (cwd, then beadsDir). Returns "" if nothing is set.
+// lookupDBPassword resolves the store DSN password from $BD_DB_PASSWORD or a .env file.
+//
+// The candidates deliberately follow the SAME project root that [findBeadsDir] resolved.
+// They used to disagree: the .bd directory was found by walking up (and, now, through git),
+// while .env was only ever looked for relative to cwd. Anywhere cwd was not the project
+// root — a git worktree, a subdirectory, a monorepo package — bd would find the DSN and
+// then fail to find its password, reporting an authentication error that looked like a
+// credentials problem rather than a path-resolution one.
+//
+// Returns "" if nothing is set.
 func lookupDBPassword(beadsDir string) string {
 	if v := os.Getenv(EnvDBPassword); v != "" {
 		return v
 	}
-	candidates := []string{envFileName}
+	candidates := []string{envFileName} // cwd-relative, kept for compatibility
 	if beadsDir != "" {
-		candidates = append(candidates, filepath.Join(beadsDir, envFileName))
+		candidates = append(candidates,
+			filepath.Join(beadsDir, envFileName),               // <project root>/.bd/.env
+			filepath.Join(filepath.Dir(beadsDir), envFileName), // <project root>/.env
+		)
 	}
 	for _, p := range candidates {
 		if v := readEnvKey(p, EnvDBPassword); v != "" {
@@ -209,11 +242,48 @@ func findBeadsDir() (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	cur := cwd
+	if dir, ok := walkUpForBeadsDir(cwd); ok {
+		return dir, true, nil
+	}
+	// Nothing on the parent chain. If we are inside a git worktree, the project is the
+	// MAIN worktree — and for a worktree created outside the repository (`git worktree
+	// add ~/elsewhere`) that directory is nowhere above cwd, so the walk above cannot
+	// reach it. Resolving through git metadata is what makes bd work from a worktree
+	// regardless of where it was placed.
+	if root := gitMainWorktreeRoot(cwd); root != "" {
+		candidate := filepath.Join(root, dirName)
+		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+			return candidate, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// walkUpForBeadsDir prefers the nearest .bd that actually holds a config over the nearest
+// .bd of any kind.
+//
+// A bare .bd — one with no config file — is created incidentally: scratch directories,
+// tooling that writes under .bd/.scratch, a half-finished `bd init`. Taking the first one
+// found meant such a directory SHADOWED the real project: bd read no DSN from it, fell
+// through to the sqlite default, and silently created an empty bd.db there. Every
+// subsequent command then ran against the wrong, empty database while appearing to work —
+// reads returned "not found" rather than an error. Observed for real in a git worktree
+// whose .bd/.scratch had been created by review tooling.
+//
+// A bare .bd is still honoured when nothing better exists anywhere up the chain, which is
+// what `bd init` in a fresh directory needs.
+func walkUpForBeadsDir(start string) (string, bool) {
+	var firstBare string
+	cur := start
 	for {
 		candidate := filepath.Join(cur, dirName)
 		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
-			return candidate, true, nil
+			if _, err := os.Stat(filepath.Join(candidate, configName)); err == nil {
+				return candidate, true
+			}
+			if firstBare == "" {
+				firstBare = candidate
+			}
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
@@ -221,7 +291,65 @@ func findBeadsDir() (string, bool, error) {
 		}
 		cur = parent
 	}
-	return "", false, nil
+	if firstBare != "" {
+		return firstBare, true
+	}
+	return "", false
+}
+
+// gitMainWorktreeRoot returns the root of the MAIN worktree of the repository containing
+// dir, or "" if dir is not inside a git repository.
+//
+// Read from git's own metadata rather than shelling out to `git`: no subprocess, no
+// dependency on git being installed or on PATH, and it stays testable with a temp dir.
+func gitMainWorktreeRoot(dir string) string {
+	cur := dir
+	for {
+		gitPath := filepath.Join(cur, gitName)
+		if st, err := os.Stat(gitPath); err == nil {
+			if st.IsDir() {
+				return cur // ordinary checkout: cur IS the main worktree root
+			}
+			if root := mainRootFromGitFile(gitPath); root != "" {
+				return root
+			}
+			return cur
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return ""
+		}
+		cur = parent
+	}
+}
+
+// mainRootFromGitFile resolves the main worktree root from a linked worktree's `.git`,
+// which is a FILE reading `gitdir: /path/to/main/.git/worktrees/<name>`. The main root
+// is the parent of the `.git` directory named in that path.
+func mainRootFromGitFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(b))
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(line, prefix) {
+		return ""
+	}
+	cur := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if cur == "" {
+		return ""
+	}
+	for {
+		if filepath.Base(cur) == gitName {
+			return filepath.Dir(cur)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return ""
+		}
+		cur = parent
+	}
 }
 
 func readDSNFromFile(beadsDir string) (string, error) {
