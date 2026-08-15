@@ -54,6 +54,7 @@ state, not free-form notes.
 ## Comments + memory
 
 - ` + "`bd comment add <id> \"text\"`" + ` — issue-scoped discussion.
+- Addressing a comment? Start it with ` + "`[reviewer]`, `[next-phase]`, `[orchestrator]`, or `[all]`" + ` — readers filter with ` + "`bd comment list <id> --tag <t>`" + `.
 - ` + "`bd remember \"text\"`" + ` — save a project-wide memory note.
 - ` + "`bd memories list`" + ` — read all memories back.
 
