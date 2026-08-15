@@ -50,7 +50,11 @@ func newReadyCmd() *cobra.Command {
 				if full {
 					return writeJSON(out)
 				}
-				return writeJSON(slimIssues(out))
+				rows, err := slimIssues(cc.ctx, cc.store, out)
+				if err != nil {
+					return err
+				}
+				return writeJSON(rows)
 			}
 			printIssueTable(out)
 			return nil

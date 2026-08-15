@@ -108,7 +108,7 @@ func newShowCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&section, "section", "", "show only one markdown ## section (slug match) of the description")
-	cmd.Flags().BoolVar(&full, "full", false, "force full description body even when long (overrides outline default)")
+	cmd.Flags().BoolVar(&full, "full", false, "force full description body even when long (overrides outline default) — prints the full body to stdout — expensive in agent context; executors use 'bd workfile <id>'")
 	cmd.Flags().BoolVar(&outline, "outline", false, "force outline of the description (don't print the body)")
 	cmd.Flags().StringSliceVar(&include, "include", nil, "extra payload: comments,labels,deps (deps+labels are included by default in text mode; comments are not)")
 	cmd.Flags().IntVar(&maxBytes, "max-bytes", 0, "cap stdout at N bytes and append a truncation marker")

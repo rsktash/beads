@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/rsktash/beads"
+	"github.com/rsktash/beads/store"
 )
 
 func writeJSON(v any) error {
@@ -31,11 +33,22 @@ type slimIssue struct {
 	Priority int             `json:"priority"`
 	Type     beads.IssueType `json:"issue_type"`
 	Assignee string          `json:"assignee,omitempty"`
+	Labels   []string        `json:"labels,omitempty"`
 }
 
-func slimIssues(in []beads.Issue) []slimIssue {
+// slimIssues converts to the slim JSON row, attaching each issue's labels.
+// ListIssues/Ready don't preload labels, so this is one ListLabels call per
+// row; list/ready result sets are the kind of size (tens, not thousands)
+// where that's cheap relative to the query that produced them. omitempty
+// matches beads.Issue.Labels' own json tag (beads.go) — unlabeled beads emit
+// no "labels" key rather than "labels": [].
+func slimIssues(ctx context.Context, st *store.Store, in []beads.Issue) ([]slimIssue, error) {
 	out := make([]slimIssue, len(in))
 	for i, x := range in {
+		labels, err := st.ListLabels(ctx, x.ID)
+		if err != nil {
+			return nil, err
+		}
 		out[i] = slimIssue{
 			ID:       x.ID,
 			Title:    x.Title,
@@ -43,9 +56,10 @@ func slimIssues(in []beads.Issue) []slimIssue {
 			Priority: x.Priority,
 			Type:     x.Type,
 			Assignee: x.Assignee,
+			Labels:   labels,
 		}
 	}
-	return out
+	return out, nil
 }
 
 func printIssueTable(issues []beads.Issue) {

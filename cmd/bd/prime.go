@@ -40,6 +40,7 @@ state, not free-form notes.
 - ` + "`bd get <id> <field>`" + ` — single field, raw, no jq. ` + "`bd get <id> fields`" + ` lists names.
 - ` + "`bd show <id> --full`" + ` — full description body (also ` + "`--head N`" + `, ` + "`--tail N`" + `, ` + "`--lines START-END`" + `).
 - ` + "`bd show id1 id2 id3 --full`" + ` — batch read several beads in one call.
+- Executing a bead? ` + "`bd workfile <id>`" + ` writes your contract to ` + "`.bd/.scratch/<id>.md`" + `; read that file. Avoid ` + "`--full`" + ` (prints the body into your context).
 - ` + "`bd show <id> --include comments`" + ` — comment bodies (` + "`--json`" + ` returns ` + "`comments_count`" + ` only by default).
 - ` + "`bd children <id>`" + ` — direct children. Add ` + "`-r`" + ` for full tree.
 - ` + "`bd search 'query'`" + ` — substring across title/description/notes.
