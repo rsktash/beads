@@ -65,6 +65,7 @@ func newRoot() *cobra.Command {
 		newFindingCmd(),
 		newRulingsCmd(),
 		newSettledCmd(),
+		newStatementsCmd(),
 	)
 	return root
 }
