@@ -143,6 +143,214 @@ func (s *Store) CreateStatement(ctx context.Context, st *beads.Statement) error 
 	return nil
 }
 
+// CreateStatementWithIssueUpdate is the atomic file-ruling-with-state-change transaction.
+// It writes the statement and, if upd != nil, updates the target issue (st.IssueID) in the same DB transaction.
+// It also applies supersede and answer links if present. Nothing partial survives an error.
+func (s *Store) CreateStatementWithIssueUpdate(ctx context.Context, st *beads.Statement, upd *IssueUpdate) error {
+	return s.createStatementTx(ctx, st, upd, nil)
+}
+
+// CreateStatementWithStateChange is an alias for CreateStatementWithIssueUpdate.
+func (s *Store) CreateStatementWithStateChange(ctx context.Context, st *beads.Statement, upd *IssueUpdate) error {
+	return s.CreateStatementWithIssueUpdate(ctx, st, upd)
+}
+
+// FileRuling is an alias for CreateStatementWithIssueUpdate.
+func (s *Store) FileRuling(ctx context.Context, st *beads.Statement, upd *IssueUpdate) error {
+	return s.CreateStatementWithIssueUpdate(ctx, st, upd)
+}
+
+// CreateRulingWithStateChange files a ruling and optionally updates an issue and links an answered question, atomically.
+func (s *Store) CreateRulingWithStateChange(ctx context.Context, st *beads.Statement, upd *IssueUpdate, answersQuestionID string) error {
+	var ansPtr *string
+	if answersQuestionID != "" {
+		ansPtr = &answersQuestionID
+	}
+	return s.createStatementTx(ctx, st, upd, ansPtr)
+}
+
+// FileRulingWithStateChange is an alias for CreateRulingWithStateChange.
+func (s *Store) FileRulingWithStateChange(ctx context.Context, st *beads.Statement, upd *IssueUpdate, answersQuestionID string) error {
+	return s.CreateRulingWithStateChange(ctx, st, upd, answersQuestionID)
+}
+
+func (s *Store) createStatementTx(ctx context.Context, st *beads.Statement, upd *IssueUpdate, answersID *string) error {
+	if st.Kind == "" {
+		return fmt.Errorf("kind is required")
+	}
+	if kindPrefix(st.Kind) == "" {
+		return fmt.Errorf("invalid kind %q", st.Kind)
+	}
+	if st.Text == "" {
+		return fmt.Errorf("text is required")
+	}
+	if st.Status == "" {
+		st.Status = "active"
+	}
+	if st.Scope == "" {
+		st.Scope = "inherit"
+	}
+	if st.CreatedAt.IsZero() {
+		st.CreatedAt = time.Now().UTC()
+	}
+	// Handle answer via st.AnsweredBy misuse for the two-param case:
+	// if answersID is nil and st.Kind is ruling and AnsweredBy is set, treat it as question id to answer.
+	if answersID == nil && st.Kind == "ruling" && st.AnsweredBy != nil && *st.AnsweredBy != "" {
+		// stash and clear so the ruling row doesn't store the question id as its own answered_by
+		v := *st.AnsweredBy
+		answersID = &v
+		st.AnsweredBy = nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Allocate id if empty inside tx.
+	if st.ID == "" {
+		q := s.rebind(`INSERT INTO statement_counters (kind, last_id) VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET last_id = statement_counters.last_id + 1 RETURNING last_id`)
+		var n int64
+		if err := tx.QueryRowContext(ctx, q, st.Kind).Scan(&n); err != nil {
+			return err
+		}
+		prefix := kindPrefix(st.Kind)
+		st.ID = fmt.Sprintf("%s-%d", prefix, n)
+	}
+
+	if err := insertStatementExec(ctx, tx, s, st); err != nil {
+		return err
+	}
+
+	// Supersede link: flip old ruling to superseded.
+	if st.SupersedesID != nil && *st.SupersedesID != "" {
+		q := s.rebind(`UPDATE statements SET status = 'superseded' WHERE id = ?`)
+		res, err := tx.ExecContext(ctx, q, *st.SupersedesID)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("superseded statement %s not found: %w", *st.SupersedesID, ErrNotFound)
+		}
+	}
+
+	// Answer link: set question's answered_by and status.
+	if answersID != nil && *answersID != "" {
+		q := s.rebind(`UPDATE statements SET answered_by = ?, status = 'answered' WHERE id = ?`)
+		res, err := tx.ExecContext(ctx, q, st.ID, *answersID)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("question %s not found: %w", *answersID, ErrNotFound)
+		}
+	}
+
+	// Issue state change, if any.
+	if upd != nil {
+		if st.IssueID == nil || *st.IssueID == "" {
+			return fmt.Errorf("state change requires issue_id")
+		}
+		if err := applyIssueUpdateTx(ctx, tx, s, *st.IssueID, *upd); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func applyIssueUpdateTx(ctx context.Context, tx *sql.Tx, s *Store, issueID string, u IssueUpdate) error {
+	var sets []string
+	var args []any
+	add := func(col string, v any) { sets = append(sets, col+"=?"); args = append(args, v) }
+	if u.Title != nil {
+		add("title", *u.Title)
+	}
+	if u.Description != nil {
+		add("description", *u.Description)
+	}
+	if u.Design != nil {
+		add("design", *u.Design)
+	}
+	if u.AcceptanceCriteria != nil {
+		add("acceptance_criteria", *u.AcceptanceCriteria)
+	}
+	if u.Notes != nil {
+		add("notes", *u.Notes)
+	}
+	if u.Type != nil {
+		add("issue_type", string(*u.Type))
+	}
+	if u.Status != nil {
+		add("status", string(*u.Status))
+		if *u.Status == beads.StatusClosed {
+			add("closed_at", time.Now().UTC())
+		}
+		if *u.Status == beads.StatusInProgress {
+			add("started_at", time.Now().UTC())
+		}
+	}
+	if u.Priority != nil {
+		add("priority", *u.Priority)
+	}
+	if u.Assignee != nil {
+		add("assignee", *u.Assignee)
+	}
+	if u.Owner != nil {
+		add("owner", *u.Owner)
+	}
+	if u.EstimatedMinutes != nil {
+		add("estimated_minutes", *u.EstimatedMinutes)
+	}
+	if u.Metadata != nil {
+		add("metadata", *u.Metadata)
+	}
+	if u.CloseReason != nil {
+		add("close_reason", *u.CloseReason)
+	}
+	if u.DueAt != nil {
+		add("due_at", *u.DueAt)
+	}
+	if u.DeferUntil != nil {
+		add("defer_until", *u.DeferUntil)
+	}
+	if u.StartedAt != nil {
+		add("started_at", *u.StartedAt)
+	}
+	if u.Ephemeral != nil {
+		add("ephemeral", boolToInt64(*u.Ephemeral))
+	}
+	if u.Pinned != nil {
+		add("pinned", boolToInt64(*u.Pinned))
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	add("updated_at", time.Now().UTC())
+	args = append(args, issueID)
+	q := s.rebind("UPDATE issues SET " + strings.Join(sets, ", ") + " WHERE id=?")
+	res, err := tx.ExecContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetStatement returns a single statement or ErrNotFound.
 func (s *Store) GetStatement(ctx context.Context, id string) (*beads.Statement, error) {
 	q := s.rebind(`SELECT id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence FROM statements WHERE id = ?`)

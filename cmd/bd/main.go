@@ -60,6 +60,7 @@ func newRoot() *cobra.Command {
 		newEpicCmd(),
 		newSchemaCmd(),
 		newMigrateCmd(),
+		newRulingCmd(),
 	)
 	return root
 }
