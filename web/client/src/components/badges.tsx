@@ -105,3 +105,54 @@ export const TYPE_BORDER_COLORS: Record<string, string> = {
 export function typeBorderColor(t: string): string {
   return TYPE_BORDER_COLORS[t] ?? "#78716C";
 }
+
+export function OriginChip({
+  originKind,
+  originIssueId,
+}: {
+  originKind: string;
+  originIssueId: string | null;
+}) {
+  if (originKind === "self" || !originKind) return null;
+  const isProject = originKind === "project";
+  const tone = isProject ? "var(--color-accent)" : "var(--color-type-epic)";
+  const label = isProject ? "project" : (originIssueId ?? originKind);
+  return (
+    <span
+      className="text-[11px] rounded px-1.5 py-0.5 font-mono"
+      style={{
+        background: `color-mix(in srgb, ${tone} 14%, transparent)`,
+        color: tone,
+      }}
+      title={isProject ? "project scope" : originIssueId ?? undefined}
+    >
+      {label}
+    </span>
+  );
+}
+
+export function OpenQuestionBadge({ count }: { count: number }) {
+  const n = Number(count ?? 0);
+  if (!n || n <= 0) return null;
+  return (
+    <span
+      className="text-[11px] rounded px-1.5 py-0.5 font-mono inline-flex items-center gap-1"
+      style={{
+        background: `color-mix(in srgb, var(--color-status-blocked) 14%, transparent)`,
+        color: "var(--color-status-blocked)",
+      }}
+      title={`${n} open question${n === 1 ? "" : "s"}`}
+    >
+      <QuestionIcon />
+      {n}
+    </span>
+  );
+}
+
+const QuestionIcon = () => (
+  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden>
+    <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M6.2 6.2c0-1.5 1.4-2.5 2.8-2.3 1 .15 1.9 1 2 2.1.1 1-.4 1.6-1 2.1l-.7.6c-.4.3-.7.7-.7 1.3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    <circle cx="8" cy="12.2" r="1" fill="currentColor" />
+  </svg>
+);

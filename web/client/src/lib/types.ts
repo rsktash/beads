@@ -61,6 +61,8 @@ export interface Issue {
   blocked_by_id: string;    // oldest open blocker (empty when none)
   blocked_by_title: string;
   comment_count: number;
+  open_question_count: number;
+  ruling_count: number;
 }
 
 export interface BlockedByEntry {
@@ -84,6 +86,17 @@ export interface Comment {
   author: string;
   text: string;
   created_at: string | null;
+}
+
+export interface Statement {
+  statement_id: string;
+  kind: string;
+  text: string;
+  created_at: string | null;
+  filed_by: string;
+  evidence: string;
+  origin_kind: string;
+  origin_issue_id: string | null;
 }
 
 export interface Me {

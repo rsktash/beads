@@ -795,6 +795,11 @@ func (s *Store) ListIssues(ctx context.Context, f ListFilter) ([]beads.Issue, er
 	return out, rows.Err()
 }
 
+// ParkDeferUntil is the far-future timestamp used by --park to mark a bead
+// as deferred (excluded from Ready) without closing it. Any future time works;
+// 9999-12-31 is deterministic and clearly greater than time.Now().
+var ParkDeferUntil = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+
 type IssueUpdate struct {
 	Title              *string
 	Description        *string
@@ -814,6 +819,8 @@ type IssueUpdate struct {
 	StartedAt          *time.Time
 	Ephemeral          *bool
 	Pinned             *bool
+	AddLabels          []string
+	ClearDeferUntil    bool
 }
 
 func (s *Store) UpdateIssue(ctx context.Context, id string, u IssueUpdate) (*beads.Issue, error) {
@@ -868,7 +875,9 @@ func (s *Store) UpdateIssue(ctx context.Context, id string, u IssueUpdate) (*bea
 	if u.DueAt != nil {
 		add("due_at", *u.DueAt)
 	}
-	if u.DeferUntil != nil {
+	if u.ClearDeferUntil {
+		sets = append(sets, "defer_until=NULL")
+	} else if u.DeferUntil != nil {
 		add("defer_until", *u.DeferUntil)
 	}
 	if u.StartedAt != nil {
@@ -880,18 +889,28 @@ func (s *Store) UpdateIssue(ctx context.Context, id string, u IssueUpdate) (*bea
 	if u.Pinned != nil {
 		add("pinned", boolToInt64(*u.Pinned))
 	}
-	if len(sets) == 0 {
+	if len(sets) == 0 && len(u.AddLabels) == 0 {
 		return s.GetIssue(ctx, id)
 	}
-	add("updated_at", time.Now().UTC())
-	args = append(args, id)
-	q := s.rebind("UPDATE issues SET " + strings.Join(sets, ", ") + " WHERE id=?")
-	res, err := s.db.ExecContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
+	if len(sets) > 0 {
+		add("updated_at", time.Now().UTC())
+		args = append(args, id)
+		q := s.rebind("UPDATE issues SET " + strings.Join(sets, ", ") + " WHERE id=?")
+		res, err := s.db.ExecContext(ctx, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil, ErrNotFound
+		}
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, ErrNotFound
+	// Labels added after the row update; for the statements transaction the
+	// label write is handled inside the same tx (see statements.go), so this
+	// path is only for direct UpdateIssue callers (e.g. un-park).
+	for _, l := range u.AddLabels {
+		if err := s.AddLabel(ctx, id, l); err != nil {
+			return nil, err
+		}
 	}
 	return s.GetIssue(ctx, id)
 }
@@ -1163,29 +1182,70 @@ func (s *Store) forwardBlocks(ctx context.Context, id string) (map[string]struct
 
 func (s *Store) Ready(ctx context.Context) ([]beads.Issue, error) {
 	now := sql.NullTime{Time: time.Now().UTC(), Valid: true}
+	var raw []beads.Issue
 	switch s.driver {
 	case DriverSQLite:
 		rows, err := s.sqlite.ReadyAt(ctx, now)
 		if err != nil {
 			return nil, err
 		}
-		out := make([]beads.Issue, 0, len(rows))
+		raw = make([]beads.Issue, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, *fromSqliteIssue(r))
+			raw = append(raw, *fromSqliteIssue(r))
 		}
-		return out, nil
 	case DriverPostgres:
 		rows, err := s.pg.ReadyAt(ctx, now)
 		if err != nil {
 			return nil, err
 		}
-		out := make([]beads.Issue, 0, len(rows))
+		raw = make([]beads.Issue, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, *fromPgIssue(r))
+			raw = append(raw, *fromPgIssue(r))
 		}
-		return out, nil
+	default:
+		return nil, fmt.Errorf("unknown driver")
 	}
-	return nil, fmt.Errorf("unknown driver")
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	blocked, err := s.activeQuestionIssueIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(blocked) == 0 {
+		return raw, nil
+	}
+	filtered := make([]beads.Issue, 0, len(raw))
+	for _, it := range raw {
+		if _, hit := blocked[it.ID]; hit {
+			continue
+		}
+		filtered = append(filtered, it)
+	}
+	return filtered, nil
+}
+
+// activeQuestionIssueIDs returns the set of issue_ids that carry at least one
+// active question. One query, no per-bead cost. NULL (project-scoped) rows are
+// ignored — they must not exclude anything.
+func (s *Store) activeQuestionIssueIDs(ctx context.Context) (map[string]struct{}, error) {
+	q := s.rebind(`SELECT DISTINCT issue_id FROM statements WHERE kind = 'question' AND status = 'active' AND issue_id IS NOT NULL`)
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var id sql.NullString
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if id.Valid && id.String != "" {
+			out[id.String] = struct{}{}
+		}
+	}
+	return out, rows.Err()
 }
 
 // ---------- labels ----------

@@ -1,0 +1,143 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"sort"
+	"strings"
+
+	"github.com/rsktash/beads"
+	"github.com/rsktash/beads/store"
+)
+
+// renderContractSections renders the EXECUTION CONTRACT sections after the
+// metadata header. It is the single source of truth for body, dependencies
+// and untyped history rendering; both printShowHuman and workfile go through it.
+func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractView, deps []beads.Dependency, comments []beads.Comment, opts showOpts) error {
+	hasStatements := len(cv.Rulings) > 0 || len(cv.Questions) > 0 || len(cv.Findings) > 0
+
+	// Sort comments newest first for both placements.
+	sorted := make([]beads.Comment, len(comments))
+	copy(sorted, comments)
+	sort.Slice(sorted, func(i, j int) bool {
+		if !sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].CreatedAt.After(sorted[j].CreatedAt)
+		}
+		return sorted[i].ID > sorted[j].ID
+	})
+
+	if !hasStatements && len(sorted) > 0 {
+		// Legacy degradation: untyped history above base text with provenance banner.
+		fmt.Fprintln(w, "\nUNTYPED HISTORY — provenance unknown, rulings may be buried here — newest first")
+		for _, c := range sorted {
+			fmt.Fprintf(w, "  [%s] %s: %s\n", c.CreatedAt.Format("2006-01-02 15:04"), c.Author, c.Text)
+		}
+		if err := renderBaseText(w, issue, opts); err != nil {
+			return err
+		}
+		if len(deps) > 0 {
+			fmt.Fprintln(w, "\nDEPENDENCIES")
+			for _, d := range deps {
+				verb, other := depRelation(issue.ID, d)
+				fmt.Fprintf(w, "  %s %s\n", verb, other)
+			}
+		}
+		return nil
+	}
+
+	// Normal path: typed sections above base text, history below dependencies.
+	if len(cv.Rulings) > 0 {
+		fmt.Fprintln(w, "\nACTIVE RULINGS — MUST OBEY")
+		for _, r := range cv.Rulings {
+			fmt.Fprintln(w, formatRulingLine(r, issue.ID))
+		}
+	}
+	if len(cv.Questions) > 0 {
+		fmt.Fprintln(w, "\nOPEN QUESTIONS — EXECUTION BLOCKERS")
+		for _, q := range cv.Questions {
+			fmt.Fprintf(w, "  %s  %s  %s\n", q.ID, q.CreatedAt.Format("2006-01-02"), q.Text)
+		}
+	}
+	if len(cv.Findings) > 0 {
+		fmt.Fprintln(w, "\nFINDINGS")
+		for _, f := range cv.Findings {
+			base := fmt.Sprintf("  %s  %s  [%s]  %s", f.ID, f.CreatedAt.Format("2006-01-02"), f.FiledBy, f.Text)
+			if strings.TrimSpace(f.Evidence) != "" {
+				base += fmt.Sprintf("  evidence: %s", f.Evidence)
+			}
+			fmt.Fprintln(w, base)
+		}
+	}
+
+	if err := renderBaseText(w, issue, opts); err != nil {
+		return err
+	}
+
+	if len(deps) > 0 {
+		fmt.Fprintln(w, "\nDEPENDENCIES")
+		for _, d := range deps {
+			verb, other := depRelation(issue.ID, d)
+			fmt.Fprintf(w, "  %s %s\n", verb, other)
+		}
+	}
+
+	if len(sorted) > 0 {
+		fmt.Fprintln(w, "\nNOTES / UNTYPED HISTORY (newest first)")
+		for _, c := range sorted {
+			fmt.Fprintf(w, "  [%s] %s: %s\n", c.CreatedAt.Format("2006-01-02 15:04"), c.Author, c.Text)
+		}
+	}
+
+	return nil
+}
+
+func formatRulingLine(st beads.Statement, issueID string) string {
+	date := st.CreatedAt.Format("2006-01-02")
+	prefix := fmt.Sprintf("  %s  %s", st.ID, date)
+	if st.IssueID == nil {
+		prefix += "  [project]"
+	} else if *st.IssueID != issueID {
+		prefix += fmt.Sprintf("  [%s]", *st.IssueID)
+	}
+	prefix += fmt.Sprintf("  %s", st.Text)
+	return prefix
+}
+
+func renderBaseText(w io.Writer, issue *beads.Issue, opts showOpts) error {
+	fmt.Fprintf(w, "\nBASE TEXT (written %s — amendments above supersede it)\n", issue.CreatedAt.Format("2006-01-02"))
+	desc := issue.Description
+	if opts.section != "" {
+		body, ok := extractSection(desc, opts.section)
+		if !ok {
+			return sectionNotFoundError(issue.ID, desc, opts.section)
+		}
+		body = opts.lineSlice.apply(body)
+		if body != "" {
+			fmt.Fprintln(w, body)
+		}
+		return nil
+	}
+	if !opts.lineSlice.empty() {
+		body := opts.lineSlice.apply(desc)
+		if body != "" {
+			fmt.Fprintln(w, body)
+		}
+		return nil
+	}
+	if opts.outline || (!opts.full && len(desc) >= outlineDefaultThreshold) {
+		fmt.Fprintf(w, "description: %d chars  (use --full or --section <slug>)\n", len(desc))
+		if hs := outlineHeadings(desc); len(hs) > 0 {
+			fmt.Fprintln(w, "sections:")
+			for _, h := range hs {
+				fmt.Fprintf(w, "  %-32s lines %d-%d\n", h.heading, h.startLine, h.endLine)
+			}
+		} else {
+			fmt.Fprintln(w, "(no ## headings — use --full to read the body)")
+		}
+		return nil
+	}
+	if desc != "" {
+		fmt.Fprintln(w, desc)
+	}
+	return nil
+}

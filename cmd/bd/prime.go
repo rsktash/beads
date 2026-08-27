@@ -22,11 +22,19 @@ state, not free-form notes.
 
 ## Daily flow
 
-- ` + "`bd ready`" + ` — what's available to work on (no open blockers).
-- ` + "`bd show <id>`" + ` — header + deps. Long descriptions print an
+- ` + "`bd ready`" + ` — what's available to work on (no open blockers, deferred, ephemeral, or open questions).
+- ` + "`bd show <id>`" + ` — execution contract for the bead (see Reading). Long descriptions print an
   outline; pass ` + "`--full`" + ` for the body or ` + "`--section <slug>`" + ` for one heading.
 - ` + "`bd update <id> --claim`" + ` — assign yourself + set in_progress.
 - ` + "`bd close <id> --reason \"...\"`" + ` — when done.
+
+## Statements — typed authority (rulings/questions/findings)
+
+- Filing: ` + "`bd ruling add [<id>] \"text\" [--supersedes R-x] [--answers Q-x] [--scope self] [--defer <RFC3339>|--park|--close]`" + `, ` + "`bd question add <id> \"text\"`" + `, ` + "`bd question answer Q-x --ruling R-y`" + `, ` + "`bd finding add <id> \"text\" [--evidence \"refs\"]`" + `. --park defers the bead to far future (defer_until=9999-12-31) and adds label 'parked' (deferred+parked, excluded from ready); --defer sets defer_until; --close closes.
+- Query: ` + "`bd rulings`" + `, ` + "`bd rulings --scope project`" + `, ` + "`bd settled <keywords>`" + `, ` + "`bd statements backfill`" + `.
+- Actor gating: An executor context cannot file a ruling, and may file questions and findings.
+- Consequences: An active ruling is binding and must not be re-litigated. An open question removes the bead from ` + "`bd ready`" + ` until it is answered. A parked bead is deferred with label 'parked' and absent from ` + "`bd ready`" + `; un-park via ` + "`bd update <id> --defer \"\"`" + ` (clear) and ` + "`bd label rm <id> parked`" + `.
+- Tiers: statements are the authority tier, untyped comments are the advisory tier — use a statement where a ruling, question, or finding is the right record; do not use an untyped comment where a statement is the right record.
 
 ## Capture
 
@@ -37,11 +45,14 @@ state, not free-form notes.
 
 ## Reading (token-aware)
 
+- ` + "`bd show <id>`" + ` renders the execution contract in this order: ` + "`CONTRACT`" + `, ` + "`ACTIVE RULINGS — MUST OBEY`" + `, ` + "`OPEN QUESTIONS — EXECUTION BLOCKERS`" + `, ` + "`FINDINGS`" + `, ` + "`BASE TEXT`" + `, ` + "`DEPENDENCIES`" + `, ` + "`NOTES / UNTYPED HISTORY`" + `.
+  Long descriptions print an outline; pass ` + "`--full`" + ` for the body or ` + "`--section <slug>`" + ` for one heading.
 - ` + "`bd get <id> <field>`" + ` — single field, raw, no jq. ` + "`bd get <id> fields`" + ` lists names.
 - ` + "`bd show <id> --full`" + ` — full description body (also ` + "`--head N`" + `, ` + "`--tail N`" + `, ` + "`--lines START-END`" + `).
 - ` + "`bd show id1 id2 id3 --full`" + ` — batch read several beads in one call.
 - Executing a bead? ` + "`bd workfile <id>`" + ` writes your contract to ` + "`.bd/.scratch/<id>.md`" + `; read that file. Avoid ` + "`--full`" + ` (prints the body into your context).
 - ` + "`bd show <id> --include comments`" + ` — comment bodies (` + "`--json`" + ` returns ` + "`comments_count`" + ` only by default).
+- ` + "`bd show <id> --json --include statements`" + ` — typed statements (` + "`--include all`" + ` includes both).
 - ` + "`bd children <id>`" + ` — direct children. Add ` + "`-r`" + ` for full tree.
 - ` + "`bd search 'query'`" + ` — substring across title/description/notes.
 
@@ -53,7 +64,7 @@ state, not free-form notes.
 
 ## Comments + memory
 
-- ` + "`bd comment add <id> \"text\"`" + ` — issue-scoped discussion.
+- ` + "`bd comment add <id> \"text\"`" + ` — issue-scoped discussion (advisory tier). For binding authority use the statement commands above.
 - Addressing a comment? Start it with ` + "`[reviewer]`, `[next-phase]`, `[orchestrator]`, or `[all]`" + ` — readers filter with ` + "`bd comment list <id> --tag <t>`" + `.
 - ` + "`bd remember \"text\"`" + ` — save a project-wide memory note.
 - ` + "`bd memories list`" + ` — read all memories back.

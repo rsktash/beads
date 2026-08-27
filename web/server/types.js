@@ -52,6 +52,8 @@ export function rowToIssue(r) {
     blocked_by_id: r.blocked_by_id || '',
     blocked_by_title: r.blocked_by_title || '',
     comment_count: r.comment_count != null ? Number(r.comment_count) : 0,
+    open_question_count: r.open_question_count != null ? Number(r.open_question_count) : 0,
+    ruling_count: r.ruling_count != null ? Number(r.ruling_count) : 0,
   };
 }
 
@@ -64,6 +66,20 @@ export function rowToDependency(r) {
     created_by: r.created_by || '',
     metadata: r.metadata || '{}',
     thread_id: r.thread_id || '',
+  };
+}
+
+export function rowToStatement(r) {
+  if (!r) return null;
+  return {
+    statement_id: r.statement_id,
+    kind: r.kind,
+    text: r.text,
+    created_at: toISO(r.created_at),
+    filed_by: r.filed_by || '',
+    evidence: r.evidence || '',
+    origin_kind: r.origin_kind,
+    origin_issue_id: r.origin_issue_id || null,
   };
 }
 

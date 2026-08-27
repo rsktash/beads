@@ -4,7 +4,7 @@
 //
 // Placeholders are `?` style. The pg adapter rewrites them to $N at runtime.
 
-import { rowToComment, rowToDependency, rowToIssue } from './types.js';
+import { rowToComment, rowToDependency, rowToIssue, rowToStatement } from './types.js';
 
 export async function getConfigValue(db, key) {
   const r = await db.one('SELECT value FROM config WHERE key = ?', [key]);
@@ -37,7 +37,9 @@ const ENRICHED_COMPUTED = `
     WHERE d.issue_id = i.id AND d.type = 'blocks'
       AND b.status NOT IN ('closed', 'pinned')
     ORDER BY b.created_at LIMIT 1) AS blocked_by_title,
-  (SELECT COUNT(*) FROM comments c WHERE c.issue_id = i.id) AS comment_count
+  (SELECT COUNT(*) FROM comments c WHERE c.issue_id = i.id) AS comment_count,
+  (SELECT COUNT(*) FROM resolved_statements rs WHERE rs.issue_id = i.id AND rs.kind = 'question') AS open_question_count,
+  (SELECT COUNT(*) FROM resolved_statements rs WHERE rs.issue_id = i.id AND rs.kind = 'ruling') AS ruling_count
 `;
 
 // Full row + enrichment — used by getIssue (detail page wants everything).
@@ -185,6 +187,18 @@ export async function listComments(db, issueId) {
   return rows.map(rowToComment);
 }
 
+export async function listStatements(db, issueId) {
+  const rows = await db.all(
+    `SELECT statement_id, kind, text, created_at, filed_by, evidence, origin_kind, origin_issue_id
+       FROM resolved_statements
+      WHERE issue_id = ?
+      ORDER BY CASE kind WHEN 'ruling' THEN 0 WHEN 'question' THEN 1 WHEN 'finding' THEN 2 ELSE 3 END,
+               created_at ASC, statement_id ASC`,
+    [issueId],
+  );
+  return rows.map(rowToStatement);
+}
+
 export async function readyIssues(db) {
   const sql = `
     SELECT ${ENRICHED_SLIM} FROM issues i
@@ -198,6 +212,10 @@ export async function readyIssues(db) {
           WHERE d.issue_id = i.id
             AND d.type = 'blocks'
             AND blocker.status NOT IN ('closed', 'pinned')
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM resolved_statements rs
+           WHERE rs.issue_id = i.id AND rs.kind = 'question'
       )
     ORDER BY i.priority ASC, i.updated_at DESC NULLS LAST`;
   const now = new Date().toISOString();

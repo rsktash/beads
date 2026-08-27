@@ -3,8 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Link } from "../lib/router";
-import type { Comment, Issue } from "../lib/types";
-import { PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
+import type { Comment, Issue, Statement } from "../lib/types";
+import { OriginChip, PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
 import { CopyId } from "../components/CopyId";
 import { Markdown } from "../components/Markdown";
 import { TableOfContents } from "../components/TableOfContents";
@@ -61,7 +61,11 @@ function IssueDetail() {
   if (q.error)     return <div className="text-red-600">{(q.error as Error).message}</div>;
   if (!q.data)     return null;
 
-  const { issue, labels, dependencies, comments, blocked_by, blocks, children } = q.data;
+  const { issue, labels, dependencies, comments, blocked_by, blocks, children, statements: rawStatements } = q.data as typeof q.data & { statements: Statement[] };
+  const statements: Statement[] = (rawStatements ?? []) as Statement[];
+  const rulings = statements.filter((s) => s.kind === "ruling");
+  const questions = statements.filter((s) => s.kind === "question");
+  const findings = statements.filter((s) => s.kind === "finding");
 
   return (
     <div className="flex h-full -m-6">
@@ -111,6 +115,72 @@ function IssueDetail() {
         >
           {issue.title}
         </h1>
+
+        {/* Contract — rulings above description, questions as blocker banner, findings */}
+        {rulings.length > 0 && (
+          <Card label="Active Rulings — Must Obey">
+            <ul className="space-y-2">
+              {rulings.map((s) => (
+                <li key={s.statement_id} className="flex flex-wrap items-start gap-2 text-sm">
+                  <span className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ background: "color-mix(in srgb, var(--color-accent) 12%, transparent)", color: "var(--color-accent)" }}>{s.statement_id}</span>
+                  <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
+                  <OriginChip originKind={s.origin_kind} originIssueId={s.origin_issue_id} />
+                  <span className="flex-1 min-w-[12rem]" style={{ color: "var(--color-ink-primary)" }}>{s.text}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+
+        {questions.length > 0 && (
+          <div
+            className="rounded-lg p-4"
+            style={{
+              background: "color-mix(in srgb, var(--color-status-blocked) 10%, var(--color-bg-elevated))",
+              border: "1px solid color-mix(in srgb, var(--color-status-blocked) 30%, transparent)",
+              boxShadow: "var(--shadow-card)",
+            }}
+          >
+            <h3
+              className="text-[11px] uppercase font-semibold tracking-wider mb-3 flex items-center gap-2"
+              style={{ color: "var(--color-status-blocked)" }}
+            >
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full" style={{ background: "var(--color-status-blocked)", color: "white", fontSize: 10 }}>!</span>
+              Open Questions — Execution Blockers
+            </h3>
+            <ul className="space-y-2">
+              {questions.map((s) => (
+                <li key={s.statement_id} className="flex flex-wrap items-start gap-2 text-sm">
+                  <span className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ background: "color-mix(in srgb, var(--color-status-blocked) 14%, transparent)", color: "var(--color-status-blocked)" }}>{s.statement_id}</span>
+                  <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
+                  <span className="flex-1 min-w-[12rem]" style={{ color: "var(--color-ink-primary)" }}>{s.text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {findings.length > 0 && (
+          <Card label="Findings">
+            <ul className="space-y-3">
+              {findings.map((s) => (
+                <li key={s.statement_id} className="text-sm space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ background: "rgba(0,0,0,0.06)", color: "var(--color-ink-secondary)" }}>{s.statement_id}</span>
+                    <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
+                    {s.filed_by && (
+                      <span className="text-xs px-1.5 py-0.5 rounded font-mono" style={{ background: "color-mix(in srgb, var(--color-ink-tertiary) 12%, transparent)", color: "var(--color-ink-tertiary)" }} title={s.filed_by}>[{s.filed_by}]</span>
+                    )}
+                  </div>
+                  <p style={{ color: "var(--color-ink-primary)" }}>{s.text}</p>
+                  {s.evidence && (
+                    <p className="text-xs font-mono" style={{ color: "var(--color-ink-tertiary)" }}>evidence: {s.evidence}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
 
         <Section title="Description" body={issue.description}
                  attachmentBaseUrl={me.data?.file_attachment_base_url} />
