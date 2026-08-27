@@ -510,95 +510,56 @@ func (s *Store) Ancestors(ctx context.Context, issueID string) ([]string, error)
 }
 
 // ContractStatements is the inheritance resolver.
-// It returns active rulings (terminal-of-chain only, scoped), active questions, and findings
-// with inheritance applied (own → ancestors → project) and scope='self' ancestors dropped.
+// It selects from the resolved_statements view which already encodes inheritance,
+// project scope, depth and supersession filtering. One query, no Go-side walk.
 func (s *Store) ContractStatements(ctx context.Context, issueID string) (ContractView, error) {
-	ancestors, err := s.Ancestors(ctx, issueID)
-	if err != nil {
-		return ContractView{}, err
-	}
-
-	// Build weight map for ordering: own=0, ancestors[0]=1,... project= len(ancestors)+1
-	weight := map[string]int{}
-	weight[issueID] = 0
-	for i, a := range ancestors {
-		weight[a] = i + 1
-	}
-	projectWeight := len(ancestors) + 1
-
-	// Build single query for all relevant statements: status='active' and (issue_id = own OR issue_id IN ancestors OR issue_id IS NULL)
-	// We fetch in one round trip regardless of count.
-	var args []any
-	var ors []string
-
-	// own
-	ors = append(ors, "issue_id = ?")
-	args = append(args, issueID)
-
-	// ancestors
-	if len(ancestors) > 0 {
-		ph := make([]string, len(ancestors))
-		for i, a := range ancestors {
-			ph[i] = "?"
-			args = append(args, a)
-		}
-		ors = append(ors, fmt.Sprintf("issue_id IN (%s)", strings.Join(ph, ",")))
-	}
-
-	// project-scoped
-	ors = append(ors, "issue_id IS NULL")
-
-	where := fmt.Sprintf("status = 'active' AND (%s)", strings.Join(ors, " OR "))
-	q := s.rebind(fmt.Sprintf(`SELECT id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence FROM statements WHERE %s`, where))
-
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	q := s.rebind(`SELECT statement_id, kind, text, created_at, filed_by, evidence, origin_kind, origin_issue_id, depth FROM resolved_statements WHERE issue_id = ? ORDER BY CASE WHEN origin_kind = 'project' THEN 1 ELSE 0 END, COALESCE(depth, 999), created_at DESC, statement_id DESC`)
+	rows, err := s.db.QueryContext(ctx, q, issueID)
 	if err != nil {
 		return ContractView{}, err
 	}
 	defer rows.Close()
 
-	var all []beads.Statement
+	var rulings, questions, findings []beads.Statement
 	for rows.Next() {
-		st, err := scanStatementRows(rows)
-		if err != nil {
+		var statementID, kind, text, filedBy, evidence, originKind string
+		var createdAt time.Time
+		var originIssueID sql.NullString
+		var depth sql.NullInt64
+		if err := rows.Scan(&statementID, &kind, &text, &createdAt, &filedBy, &evidence, &originKind, &originIssueID, &depth); err != nil {
 			return ContractView{}, err
 		}
-		all = append(all, *st)
-	}
-	if err := rows.Err(); err != nil {
-		return ContractView{}, err
-	}
-
-	// Apply scope filtering: ancestor statements with scope='self' are dropped; own and project never dropped.
-	var filtered []beads.Statement
-	for _, st := range all {
-		if st.IssueID == nil {
-			// project-scoped: always keep
-			filtered = append(filtered, st)
-			continue
+		st := beads.Statement{
+			ID:        statementID,
+			Kind:      kind,
+			Text:      text,
+			CreatedAt: createdAt,
+			FiledBy:   filedBy,
+			Evidence:  evidence,
+			Status:    "active",
+			Scope:     "inherit",
 		}
-		iid := *st.IssueID
-		if iid == issueID {
-			// own: never dropped by scope
-			filtered = append(filtered, st)
-			continue
-		}
-		// ancestor?
-		if _, isAncestor := weight[iid]; isAncestor {
-			if st.Scope == "self" {
-				continue
+		// Map view's origin to Statement.IssueID so existing renderer keeps its
+		// bracket logic: self -> own id (no bracket), epic -> ancestor id,
+		// project -> nil ([project]).
+		switch originKind {
+		case "project":
+			st.IssueID = nil
+		case "self":
+			v := issueID
+			st.IssueID = &v
+		case "epic":
+			if originIssueID.Valid {
+				v := originIssueID.String
+				st.IssueID = &v
 			}
-			filtered = append(filtered, st)
-			continue
+		default:
+			if originIssueID.Valid {
+				v := originIssueID.String
+				st.IssueID = &v
+			}
 		}
-		// Should not happen: issue_id not in ancestors or own but also not NULL.
-		// This would be an unrelated issue; skip.
-	}
-
-	// Split by kind
-	var rulings, questions, findings []beads.Statement
-	for _, st := range filtered {
-		switch st.Kind {
+		switch kind {
 		case "ruling":
 			rulings = append(rulings, st)
 		case "question":
@@ -607,60 +568,9 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 			findings = append(findings, st)
 		}
 	}
-
-	// Reduce rulings to terminal-of-chain only.
-	if len(rulings) > 0 {
-		superseded := map[string]bool{}
-		for _, r := range rulings {
-			if r.SupersedesID != nil && *r.SupersedesID != "" {
-				superseded[*r.SupersedesID] = true
-			}
-		}
-		var terminals []beads.Statement
-		for _, r := range rulings {
-			if !superseded[r.ID] {
-				terminals = append(terminals, r)
-			}
-		}
-		rulings = terminals
+	if err := rows.Err(); err != nil {
+		return ContractView{}, err
 	}
-
-	sortByWeight := func(slice []beads.Statement) {
-		for i := 0; i < len(slice); i++ {
-			for j := i + 1; j < len(slice); j++ {
-				wi := projectWeight
-				wj := projectWeight
-				if slice[i].IssueID != nil {
-					if w, ok := weight[*slice[i].IssueID]; ok {
-						wi = w
-					}
-				}
-				if slice[j].IssueID != nil {
-					if w, ok := weight[*slice[j].IssueID]; ok {
-						wj = w
-					}
-				}
-				shouldSwap := false
-				if wi != wj {
-					shouldSwap = wi > wj
-				} else {
-					// same weight: newest first
-					if !slice[i].CreatedAt.Equal(slice[j].CreatedAt) {
-						shouldSwap = slice[i].CreatedAt.Before(slice[j].CreatedAt)
-					} else {
-						shouldSwap = slice[i].ID < slice[j].ID
-					}
-				}
-				if shouldSwap {
-					slice[i], slice[j] = slice[j], slice[i]
-				}
-			}
-		}
-	}
-	sortByWeight(rulings)
-	sortByWeight(questions)
-	sortByWeight(findings)
-
 	return ContractView{
 		Rulings:   rulings,
 		Questions: questions,
