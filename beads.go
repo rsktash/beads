@@ -175,6 +175,21 @@ type Memory struct {
 	CreatedBy string    `db:"created_by" json:"created_by,omitempty"`
 }
 
+type Statement struct {
+	ID              string    `db:"id" json:"id"`
+	Kind            string    `db:"kind" json:"kind"`
+	IssueID         *string   `db:"issue_id" json:"issue_id"`
+	Text            string    `db:"text" json:"text"`
+	CreatedAt       time.Time `db:"created_at" json:"created_at"`
+	FiledBy         string    `db:"filed_by" json:"filed_by"`
+	Status          string    `db:"status" json:"status"`
+	Scope           string    `db:"scope" json:"scope"`
+	SupersedesID    *string   `db:"supersedes_id" json:"supersedes_id,omitempty"`
+	AnsweredBy      *string   `db:"answered_by" json:"answered_by,omitempty"`
+	SourceCommentID *string   `db:"source_comment_id" json:"source_comment_id,omitempty"`
+	Evidence        string    `db:"evidence" json:"evidence,omitempty"`
+}
+
 type Comment struct {
 	ID        string    `db:"id" json:"id"`
 	IssueID   string    `db:"issue_id" json:"issue_id"`
