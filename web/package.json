@@ -29,7 +29,8 @@
     "dev:server": "node --watch server/index.js",
     "build": "vite build --config client/vite.config.ts",
     "start": "node server/index.js",
-    "typecheck": "tsc --noEmit -p client/tsconfig.json"
+    "typecheck": "tsc --noEmit -p client/tsconfig.json",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.1",
