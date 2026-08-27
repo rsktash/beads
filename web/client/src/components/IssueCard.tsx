@@ -1,6 +1,6 @@
 import { Link } from "../lib/router";
 import type { Issue } from "../lib/types";
-import { PriorityBadge, TypeBadge, typeBorderColor } from "./badges";
+import { OpenQuestionBadge, PriorityBadge, TypeBadge, typeBorderColor } from "./badges";
 import { CopyId } from "./CopyId";
 import { getAvatarColor, getInitials } from "../lib/avatar";
 
@@ -86,6 +86,9 @@ export function IssueCard({
               label={String(issue.comment_count)}
               title={`${issue.comment_count} comment${issue.comment_count === 1 ? "" : "s"}`}
             />
+          )}
+          {(issue.open_question_count ?? 0) > 0 && (
+            <OpenQuestionBadge count={issue.open_question_count ?? 0} />
           )}
           <div className="flex-1" />
           {issue.assignee && (

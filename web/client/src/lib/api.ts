@@ -5,7 +5,7 @@
 // Global methods (me, login, logout, listProjects) sit alongside as plain
 // functions — they don't need a project context.
 
-import type { Comment, Dependency, Issue, Me } from "./types";
+import type { Comment, Dependency, Issue, Me, Statement } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -79,6 +79,7 @@ class ProjectApi {
       blocked_by: { id: string; title: string }[];
       blocks: { id: string; title: string }[];
       children: { id: string; title: string; status: string; priority: number; issue_type: string }[];
+      statements: Statement[];
     }>("GET", this.path(`/issues/${encodeURIComponent(id)}`));
 
   addComment = (issueId: string, text: string) =>
