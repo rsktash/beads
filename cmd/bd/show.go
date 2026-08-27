@@ -250,7 +250,7 @@ func printShowHuman(w io.Writer, cc *cmdCtx, id string, opts showOpts) error {
 		return err
 	}
 
-	fmt.Fprintf(w, "%s  [%s] %s p%d %s\n", i.ID, i.Status, i.Type, i.Priority, i.Title)
+	fmt.Fprintf(w, "CONTRACT %s  [%s] %s p%d %s\n", i.ID, i.Status, i.Type, i.Priority, i.Title)
 	if i.Assignee != "" {
 		fmt.Fprintf(w, "assignee: %s\n", i.Assignee)
 	}
@@ -269,63 +269,16 @@ func printShowHuman(w io.Writer, cc *cmdCtx, id string, opts showOpts) error {
 		fmt.Fprintf(w, "closed:   %s (%s)\n", i.ClosedAt.Format("2006-01-02 15:04:05"), i.CloseReason)
 	}
 
-	desc := i.Description
-	if opts.section != "" {
-		body, ok := extractSection(desc, opts.section)
-		if !ok {
-			return sectionNotFoundError(id, desc, opts.section)
-		}
-		body = opts.lineSlice.apply(body)
-		if body != "" {
-			fmt.Fprintln(w, "\n"+body)
-		}
-	} else if !opts.lineSlice.empty() {
-		body := opts.lineSlice.apply(desc)
-		if body != "" {
-			fmt.Fprintln(w, "\n"+body)
-		}
-	} else if opts.outline || (!opts.full && len(desc) >= outlineDefaultThreshold) {
-		fmt.Fprintf(w, "\ndescription: %d chars  (use --full or --section <slug>)\n", len(desc))
-		if hs := outlineHeadings(desc); len(hs) > 0 {
-			fmt.Fprintln(w, "sections:")
-			for _, h := range hs {
-				fmt.Fprintf(w, "  %-32s lines %d-%d\n", h.heading, h.startLine, h.endLine)
-			}
-		} else {
-			fmt.Fprintln(w, "(no ## headings — use --full to read the body)")
-		}
-	} else if desc != "" {
-		fmt.Fprintln(w, "\n"+desc)
+	cv, err := cc.store.ContractStatements(cc.ctx, id)
+	if err != nil {
+		return err
 	}
-
-	if len(deps) > 0 {
-		fmt.Fprintln(w, "\ndependencies:")
-		for _, d := range deps {
-			// Render each edge from the perspective of the shown issue using a
-			// direction-explicit verb so it can't be misread as the inverse
-			// (see depRelation). e.g. "blocked by bd-12", "blocks bd-30".
-			verb, other := depRelation(id, d)
-			fmt.Fprintf(w, "  %s %s\n", verb, other)
-		}
-	}
-
-	// Comments: include count in text mode always (it's tiny). Body behind
-	// --include comments.
 	cs, err := cc.store.ListComments(cc.ctx, id)
 	if err != nil {
 		return err
 	}
-	if len(cs) > 0 {
-		if opts.include.comments {
-			fmt.Fprintln(w, "\n--- comments ---")
-			for _, c := range cs {
-				fmt.Fprintf(w, "  [%s] %s: %s\n", c.CreatedAt.Format("2006-01-02 15:04"), c.Author, c.Text)
-			}
-		} else {
-			fmt.Fprintf(w, "\ncomments: %d  (use --include comments)\n", len(cs))
-		}
-	}
-	return nil
+
+	return renderContractSections(w, i, cv, deps, cs, opts)
 }
 
 // --- description outlining ---
