@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/rsktash/beads/store"
 )
 
 // outlineDefaultThreshold — descriptions longer than this default to an
@@ -129,10 +131,11 @@ type showOpts struct {
 }
 
 type includeSet struct {
-	comments bool
-	labels   bool
+	comments   bool
+	labels     bool
 	deps     bool
-	all      bool
+	statements bool
+	all        bool
 }
 
 func parseIncludeSet(raw []string) includeSet {
@@ -145,11 +148,14 @@ func parseIncludeSet(raw []string) includeSet {
 			s.labels = true
 		case "deps", "dependencies":
 			s.deps = true
+		case "statements":
+			s.statements = true
 		case "all":
 			s.all = true
 			s.comments = true
 			s.labels = true
 			s.deps = true
+			s.statements = true
 		}
 	}
 	return s
@@ -166,6 +172,7 @@ func buildShowJSON(cc *cmdCtx, id string, opts showOpts) (any, error) {
 		Dependencies       any    `json:"dependencies,omitempty"`
 		Comments           any    `json:"comments,omitempty"`
 		CommentsCount      *int   `json:"comments_count,omitempty"`
+		Statements         any    `json:"statements,omitempty"`
 		Outline            any    `json:"description_outline,omitempty"`
 		DescriptionSection string `json:"description_section,omitempty"`
 		DescriptionSlice   string `json:"description_slice,omitempty"`
@@ -207,6 +214,17 @@ func buildShowJSON(cc *cmdCtx, id string, opts showOpts) (any, error) {
 		}
 		n := len(cs)
 		out.CommentsCount = &n
+	}
+
+	// Statements: behind --include statements.
+	if opts.include.statements {
+		stmts, err := cc.store.ListStatements(cc.ctx, store.StatementFilter{IssueIDs: []string{id}})
+		if err != nil {
+			return nil, err
+		}
+		if len(stmts) > 0 {
+			out.Statements = stmts
+		}
 	}
 
 	// Description handling: section/outline/slice rewrite the Description.
