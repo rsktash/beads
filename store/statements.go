@@ -381,7 +381,7 @@ func (s *Store) UpdateStatementStatus(ctx context.Context, id string, status str
 
 // SetAnsweredBy links a question to its answering ruling and marks it answered.
 func (s *Store) SetAnsweredBy(ctx context.Context, questionID, rulingID string) error {
-	q := s.rebind(`UPDATE statements SET answered_by = ? WHERE id = ?`)
+	q := s.rebind(`UPDATE statements SET answered_by = ?, status = 'answered' WHERE id = ?`)
 	res, err := s.db.ExecContext(ctx, q, strPtrToNullString(rulingID), questionID)
 	if err != nil {
 		return err
