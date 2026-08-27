@@ -1163,29 +1163,70 @@ func (s *Store) forwardBlocks(ctx context.Context, id string) (map[string]struct
 
 func (s *Store) Ready(ctx context.Context) ([]beads.Issue, error) {
 	now := sql.NullTime{Time: time.Now().UTC(), Valid: true}
+	var raw []beads.Issue
 	switch s.driver {
 	case DriverSQLite:
 		rows, err := s.sqlite.ReadyAt(ctx, now)
 		if err != nil {
 			return nil, err
 		}
-		out := make([]beads.Issue, 0, len(rows))
+		raw = make([]beads.Issue, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, *fromSqliteIssue(r))
+			raw = append(raw, *fromSqliteIssue(r))
 		}
-		return out, nil
 	case DriverPostgres:
 		rows, err := s.pg.ReadyAt(ctx, now)
 		if err != nil {
 			return nil, err
 		}
-		out := make([]beads.Issue, 0, len(rows))
+		raw = make([]beads.Issue, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, *fromPgIssue(r))
+			raw = append(raw, *fromPgIssue(r))
 		}
-		return out, nil
+	default:
+		return nil, fmt.Errorf("unknown driver")
 	}
-	return nil, fmt.Errorf("unknown driver")
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	blocked, err := s.activeQuestionIssueIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(blocked) == 0 {
+		return raw, nil
+	}
+	filtered := make([]beads.Issue, 0, len(raw))
+	for _, it := range raw {
+		if _, hit := blocked[it.ID]; hit {
+			continue
+		}
+		filtered = append(filtered, it)
+	}
+	return filtered, nil
+}
+
+// activeQuestionIssueIDs returns the set of issue_ids that carry at least one
+// active question. One query, no per-bead cost. NULL (project-scoped) rows are
+// ignored — they must not exclude anything.
+func (s *Store) activeQuestionIssueIDs(ctx context.Context) (map[string]struct{}, error) {
+	q := s.rebind(`SELECT DISTINCT issue_id FROM statements WHERE kind = 'question' AND status = 'active' AND issue_id IS NOT NULL`)
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var id sql.NullString
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if id.Valid && id.String != "" {
+			out[id.String] = struct{}{}
+		}
+	}
+	return out, rows.Err()
 }
 
 // ---------- labels ----------

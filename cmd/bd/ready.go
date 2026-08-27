@@ -12,7 +12,7 @@ func newReadyCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "ready",
-		Short: "List beads with no open blockers (and not deferred/ephemeral). --parent <id> scopes to descendants of that issue.",
+		Short: "List beads with no open blockers, deferred, ephemeral, or open questions. --parent <id> scopes to descendants of that issue.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cc, err := openStore(cmd)
 			if err != nil {
