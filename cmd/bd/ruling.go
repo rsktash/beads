@@ -27,13 +27,15 @@ func newRulingAddCmd() *cobra.Command {
 		scope      string
 		deferStr   string
 		closeFlag  bool
+		parkFlag   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add [<issue-id>] <text>",
 		Short: "File a ruling (actor-gated: BD_ACTOR=executor is refused)",
 		Long: `File a ruling. With one arg, files a project-scoped ruling (issue_id NULL). With two args, first is issue id, second is text.
 
-Flags --defer and --close atomically update the bead's state in the same transaction as the ruling row.
+Flags --defer, --park and --close atomically update the bead's state in the same transaction as the ruling row.
+--park defers the bead to the far future (9999-12-31) and adds label 'parked'; it is deferred+parked label, no new status.
 
 Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question instead. BD_ACTOR=coordinator or unset (owner) is allowed.`,
 		Args: cobra.RangeArgs(1, 2),
@@ -74,12 +76,19 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 			f := cmd.Flags()
 			hasDefer := f.Changed("defer")
 			hasClose := f.Changed("close")
+			hasPark := parkFlag
 			if hasDefer && hasClose {
 				return fmt.Errorf("--defer and --close are mutually exclusive")
 			}
-			// defer/close require issue id
-			if (hasDefer || hasClose) && issueID == nil {
-				return fmt.Errorf("--defer and --close require an issue id")
+			if hasPark && hasDefer {
+				return fmt.Errorf("--park and --defer are mutually exclusive")
+			}
+			if hasPark && hasClose {
+				return fmt.Errorf("--park and --close are mutually exclusive")
+			}
+			// defer/park/close require issue id
+			if (hasDefer || hasClose || hasPark) && issueID == nil {
+				return fmt.Errorf("--defer, --park and --close require an issue id")
 			}
 
 			// Scope
@@ -123,6 +132,10 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 				}
 				upd = &store.IssueUpdate{DeferUntil: &t}
 			}
+			if hasPark {
+				t := store.ParkDeferUntil
+				upd = &store.IssueUpdate{DeferUntil: &t, AddLabels: []string{"parked"}}
+			}
 			if hasClose {
 				closed := beads.StatusClosed
 				upd = &store.IssueUpdate{Status: &closed}
@@ -154,5 +167,6 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 	cmd.Flags().StringVar(&scope, "scope", "", "scope: self or inherit (default inherit)")
 	cmd.Flags().StringVar(&deferStr, "defer", "", "defer bead until RFC3339 timestamp (atomic with ruling)")
 	cmd.Flags().BoolVar(&closeFlag, "close", false, "close the bead (atomic with ruling)")
+	cmd.Flags().BoolVar(&parkFlag, "park", false, "park the bead (defer far future + label 'parked', atomic with ruling)")
 	return cmd
 }

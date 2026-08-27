@@ -555,3 +555,275 @@ func TestRuling_DeferAndCloseMutualExclusive(t *testing.T) {
 	}
 	_ = dsn
 }
+
+func TestRuling_ParkAtomicSuccess(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "park success")
+	_ = st.Close()
+	t.Setenv("BD_ACTOR", "coordinator")
+	out, _, err := runRulingAdd(t, []string{"add", issue.ID, "park ruling", "--park"})
+	if err != nil {
+		t.Fatalf("park add: %v", err)
+	}
+	if !strings.Contains(out, "R-") {
+		t.Fatalf("missing id %q", out)
+	}
+	ctx := context.Background()
+	st2, _ := store.Open(ctx, dsn)
+	defer st2.Close()
+	got, _ := st2.GetIssue(ctx, issue.ID)
+	if got.DeferUntil == nil {
+		t.Fatalf("defer_until not set for park")
+	}
+	if !got.DeferUntil.Equal(store.ParkDeferUntil) {
+		t.Fatalf("park defer_until should be far future %v, got %v", store.ParkDeferUntil, *got.DeferUntil)
+	}
+	if got.Status == beads.StatusClosed {
+		t.Fatalf("park should not close, got %s", got.Status)
+	}
+	labels, _ := st2.ListLabels(ctx, issue.ID)
+	found := false
+	for _, l := range labels {
+		if l == "parked" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("parked label missing, got %v", labels)
+	}
+	list, _ := st2.ListStatements(ctx, store.StatementFilter{})
+	if len(list) != 1 {
+		t.Fatalf("expected 1 ruling, got %d", len(list))
+	}
+}
+
+func TestRuling_ParkAtomicFailure(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "park fail")
+	ctx := context.Background()
+	_ = st.Close()
+	st2, _ := store.Open(ctx, dsn)
+	defer st2.Close()
+	t.Setenv("BD_ACTOR", "coordinator")
+	identity, _ := resolveActor()
+	// Force second half failure via bad priority CHECK, with park's defer+label
+	badPrio := 99
+	far := store.ParkDeferUntil
+	upd := store.IssueUpdate{DeferUntil: &far, Priority: &badPrio, AddLabels: []string{"parked"}}
+	stmt := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "park should rollback", FiledBy: identity, Status: "active", Scope: "inherit"}
+	err := st2.CreateStatementWithIssueUpdate(ctx, stmt, &upd)
+	if err == nil {
+		t.Fatalf("expected transaction to fail on priority CHECK for park")
+	}
+	afterSt, _ := store.Open(ctx, dsn)
+	defer afterSt.Close()
+	list, _ := afterSt.ListStatements(ctx, store.StatementFilter{})
+	if len(list) != 0 {
+		t.Fatalf("failed park transaction should leave zero statements, got %d", len(list))
+	}
+	got, _ := afterSt.GetIssue(ctx, issue.ID)
+	if got.DeferUntil != nil {
+		t.Fatalf("defer_until should remain nil after park rollback, got %v", *got.DeferUntil)
+	}
+	labels, _ := afterSt.ListLabels(ctx, issue.ID)
+	for _, l := range labels {
+		if l == "parked" {
+			t.Fatalf("parked label should not persist after rollback")
+		}
+	}
+	// Counter not leaked: next should be R-1
+	upd2 := store.IssueUpdate{Priority: func() *int { i := 2; return &i }()}
+	okStmt := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "ok after park fail", FiledBy: identity, Status: "active", Scope: "inherit"}
+	if err := afterSt.CreateStatementWithIssueUpdate(ctx, okStmt, &upd2); err != nil {
+		t.Fatalf("next ok after park fail: %v", err)
+	}
+	if okStmt.ID != "R-1" {
+		t.Fatalf("counter leaked after park fail, expected R-1 got %s", okStmt.ID)
+	}
+}
+
+func TestRuling_ParkReadyExclusion(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "park ready")
+	ctx := context.Background()
+	// Ensure bead is ready before park
+	readyBefore, _ := st.Ready(ctx)
+	foundBefore := false
+	for _, r := range readyBefore {
+		if r.ID == issue.ID {
+			foundBefore = true
+		}
+	}
+	if !foundBefore {
+		t.Fatalf("bead should be ready before park, got %+v", readyBefore)
+	}
+	_ = st.Close()
+	t.Setenv("BD_ACTOR", "coordinator")
+	_, _, err := runRulingAdd(t, []string{"add", issue.ID, "park for ready", "--park"})
+	if err != nil {
+		t.Fatalf("park add: %v", err)
+	}
+	st2, _ := store.Open(ctx, dsn)
+	defer st2.Close()
+	readyAfter, _ := st2.Ready(ctx)
+	for _, r := range readyAfter {
+		if r.ID == issue.ID {
+			t.Fatalf("parked bead %s should not be in ready, got %+v", issue.ID, readyAfter)
+		}
+	}
+	// Same bead was present before, absent after — both asserted in one test
+	if !foundBefore {
+		t.Fatalf("ready before check failed")
+	}
+}
+
+func TestRuling_ParkDoesNotCloseNorCascade(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	ctx := context.Background()
+	epic := &beads.Issue{Title: "epic", Type: beads.TypeEpic, Status: beads.StatusOpen, Priority: 1}
+	if err := st.CreateIssue(ctx, epic); err != nil {
+		t.Fatalf("epic: %v", err)
+	}
+	child1 := &beads.Issue{Title: "child1", Type: beads.TypeTask, Status: beads.StatusOpen, Priority: 1}
+	if err := st.CreateChild(ctx, epic.ID, child1, nil); err != nil {
+		t.Fatalf("child1: %v", err)
+	}
+	child2 := &beads.Issue{Title: "child2", Type: beads.TypeTask, Status: beads.StatusOpen, Priority: 1}
+	if err := st.CreateChild(ctx, epic.ID, child2, nil); err != nil {
+		t.Fatalf("child2: %v", err)
+	}
+	// Close child1 via normal update (not ruling)
+	closed := beads.StatusClosed
+	if _, err := st.UpdateIssue(ctx, child1.ID, store.IssueUpdate{Status: &closed}); err != nil {
+		t.Fatalf("close child1: %v", err)
+	}
+	_ = st.Close()
+	t.Setenv("BD_ACTOR", "coordinator")
+	_, _, err := runRulingAdd(t, []string{"add", child2.ID, "park last child", "--park"})
+	if err != nil {
+		t.Fatalf("park child2: %v", err)
+	}
+	st2, _ := store.Open(ctx, dsn)
+	defer st2.Close()
+	gotEpic, _ := st2.GetIssue(ctx, epic.ID)
+	if gotEpic.Status == beads.StatusClosed {
+		t.Fatalf("epic should remain open when last child is parked, got closed")
+	}
+	gotChild2, _ := st2.GetIssue(ctx, child2.ID)
+	if gotChild2.Status == beads.StatusClosed {
+		t.Fatalf("parked child should not be closed, got %s", gotChild2.Status)
+	}
+}
+
+func TestRuling_ParkShowRendersActiveRulings(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "park show")
+	_ = st.Close()
+	t.Setenv("BD_ACTOR", "coordinator")
+	_, _, err := runRulingAdd(t, []string{"add", issue.ID, "park show ruling", "--park"})
+	if err != nil {
+		t.Fatalf("park add: %v", err)
+	}
+	ctx := context.Background()
+	st2, _ := store.Open(ctx, dsn)
+	defer st2.Close()
+	// Verify via contract resolver and via human render
+	cv, err := st2.ContractStatements(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("contract: %v", err)
+	}
+	if len(cv.Rulings) == 0 {
+		t.Fatalf("contract should contain parked ruling")
+	}
+	found := false
+	for _, r := range cv.Rulings {
+		if strings.Contains(r.Text, "park show ruling") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("park ruling not in contract view")
+	}
+	// Also verify human rendering contains header
+	out := renderContractOutput(t, st2, issue.ID, showOpts{})
+	if !strings.Contains(out, "ACTIVE RULINGS — MUST OBEY") {
+		t.Fatalf("show should render ACTIVE RULINGS for parked bead, got:\n%s", out)
+	}
+	if !strings.Contains(out, "park show ruling") {
+		t.Fatalf("show should contain ruling text, got:\n%s", out)
+	}
+}
+
+func TestRuling_ParkUnparkReturnsToReady(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "park unpark")
+	_ = st.Close()
+	t.Setenv("BD_ACTOR", "coordinator")
+	_, _, err := runRulingAdd(t, []string{"add", issue.ID, "park for unpark", "--park"})
+	if err != nil {
+		t.Fatalf("park: %v", err)
+	}
+	ctx := context.Background()
+	st2, _ := store.Open(ctx, dsn)
+	// Verify parked is not ready
+	ready, _ := st2.Ready(ctx)
+	for _, r := range ready {
+		if r.ID == issue.ID {
+			t.Fatalf("parked should not be ready")
+		}
+	}
+	// Un-park via clearing defer and removing label (the path named in prime)
+	if err := st2.RemoveLabel(ctx, issue.ID, "parked"); err != nil {
+		t.Fatalf("rm label: %v", err)
+	}
+	if _, err := st2.UpdateIssue(ctx, issue.ID, store.IssueUpdate{ClearDeferUntil: true}); err != nil {
+		t.Fatalf("clear defer: %v", err)
+	}
+	ready2, _ := st2.Ready(ctx)
+	found := false
+	for _, r := range ready2 {
+		if r.ID == issue.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("after un-park, bead should be ready, got %+v", ready2)
+	}
+	// Also verify defer cleared and label gone
+	got, _ := st2.GetIssue(ctx, issue.ID)
+	if got.DeferUntil != nil {
+		t.Fatalf("defer should be nil after un-park, got %v", *got.DeferUntil)
+	}
+	labels, _ := st2.ListLabels(ctx, issue.ID)
+	for _, l := range labels {
+		if l == "parked" {
+			t.Fatalf("parked label should be gone after un-park")
+		}
+	}
+	st2.Close()
+}
+
+func TestRuling_ParkMutualExclusive(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "park mutual")
+	_ = st.Close()
+	t.Setenv("BD_ACTOR", "coordinator")
+	// park+defer
+	deferStr := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+	_, _, err := runRulingAdd(t, []string{"add", issue.ID, "text", "--park", "--defer", deferStr})
+	if err == nil {
+		t.Fatalf("park and defer together should fail")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "park") || !strings.Contains(strings.ToLower(err.Error()), "defer") {
+		t.Fatalf("park+defer error should name both flags, got %v", err)
+	}
+	// park+close
+	_, _, err = runRulingAdd(t, []string{"add", issue.ID, "text", "--park", "--close"})
+	if err == nil {
+		t.Fatalf("park and close together should fail")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "park") || !strings.Contains(strings.ToLower(err.Error()), "close") {
+		t.Fatalf("park+close error should name both flags, got %v", err)
+	}
+	_ = dsn
+}

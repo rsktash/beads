@@ -30,10 +30,10 @@ state, not free-form notes.
 
 ## Statements — typed authority (rulings/questions/findings)
 
-- Filing: ` + "`bd ruling add [<id>] \"text\" [--supersedes R-x] [--answers Q-x] [--scope self] [--defer <RFC3339>|--close]`" + `, ` + "`bd question add <id> \"text\"`" + `, ` + "`bd question answer Q-x --ruling R-y`" + `, ` + "`bd finding add <id> \"text\" [--evidence \"refs\"]`" + `.
+- Filing: ` + "`bd ruling add [<id>] \"text\" [--supersedes R-x] [--answers Q-x] [--scope self] [--defer <RFC3339>|--park|--close]`" + `, ` + "`bd question add <id> \"text\"`" + `, ` + "`bd question answer Q-x --ruling R-y`" + `, ` + "`bd finding add <id> \"text\" [--evidence \"refs\"]`" + `. --park defers the bead to far future (defer_until=9999-12-31) and adds label 'parked' (deferred+parked, excluded from ready); --defer sets defer_until; --close closes.
 - Query: ` + "`bd rulings`" + `, ` + "`bd rulings --scope project`" + `, ` + "`bd settled <keywords>`" + `, ` + "`bd statements backfill`" + `.
 - Actor gating: An executor context cannot file a ruling, and may file questions and findings.
-- Consequences: An active ruling is binding and must not be re-litigated. An open question removes the bead from ` + "`bd ready`" + ` until it is answered.
+- Consequences: An active ruling is binding and must not be re-litigated. An open question removes the bead from ` + "`bd ready`" + ` until it is answered. A parked bead is deferred with label 'parked' and absent from ` + "`bd ready`" + `; un-park via ` + "`bd update <id> --defer \"\"`" + ` (clear) and ` + "`bd label rm <id> parked`" + `.
 - Tiers: statements are the authority tier, untyped comments are the advisory tier — use a statement where a ruling, question, or finding is the right record; do not use an untyped comment where a statement is the right record.
 
 ## Capture

@@ -795,6 +795,11 @@ func (s *Store) ListIssues(ctx context.Context, f ListFilter) ([]beads.Issue, er
 	return out, rows.Err()
 }
 
+// ParkDeferUntil is the far-future timestamp used by --park to mark a bead
+// as deferred (excluded from Ready) without closing it. Any future time works;
+// 9999-12-31 is deterministic and clearly greater than time.Now().
+var ParkDeferUntil = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+
 type IssueUpdate struct {
 	Title              *string
 	Description        *string
@@ -814,6 +819,8 @@ type IssueUpdate struct {
 	StartedAt          *time.Time
 	Ephemeral          *bool
 	Pinned             *bool
+	AddLabels          []string
+	ClearDeferUntil    bool
 }
 
 func (s *Store) UpdateIssue(ctx context.Context, id string, u IssueUpdate) (*beads.Issue, error) {
@@ -868,7 +875,9 @@ func (s *Store) UpdateIssue(ctx context.Context, id string, u IssueUpdate) (*bea
 	if u.DueAt != nil {
 		add("due_at", *u.DueAt)
 	}
-	if u.DeferUntil != nil {
+	if u.ClearDeferUntil {
+		sets = append(sets, "defer_until=NULL")
+	} else if u.DeferUntil != nil {
 		add("defer_until", *u.DeferUntil)
 	}
 	if u.StartedAt != nil {
@@ -880,18 +889,28 @@ func (s *Store) UpdateIssue(ctx context.Context, id string, u IssueUpdate) (*bea
 	if u.Pinned != nil {
 		add("pinned", boolToInt64(*u.Pinned))
 	}
-	if len(sets) == 0 {
+	if len(sets) == 0 && len(u.AddLabels) == 0 {
 		return s.GetIssue(ctx, id)
 	}
-	add("updated_at", time.Now().UTC())
-	args = append(args, id)
-	q := s.rebind("UPDATE issues SET " + strings.Join(sets, ", ") + " WHERE id=?")
-	res, err := s.db.ExecContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
+	if len(sets) > 0 {
+		add("updated_at", time.Now().UTC())
+		args = append(args, id)
+		q := s.rebind("UPDATE issues SET " + strings.Join(sets, ", ") + " WHERE id=?")
+		res, err := s.db.ExecContext(ctx, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil, ErrNotFound
+		}
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, ErrNotFound
+	// Labels added after the row update; for the statements transaction the
+	// label write is handled inside the same tx (see statements.go), so this
+	// path is only for direct UpdateIssue callers (e.g. un-park).
+	for _, l := range u.AddLabels {
+		if err := s.AddLabel(ctx, id, l); err != nil {
+			return nil, err
+		}
 	}
 	return s.GetIssue(ctx, id)
 }

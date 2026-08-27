@@ -101,11 +101,15 @@ func newUpdateCmd() *cobra.Command {
 				u.DueAt = t
 			}
 			if f.Changed("defer") {
-				t, err := parseOptTime(deferStr)
-				if err != nil {
-					return err
+				if deferStr == "" {
+					u.ClearDeferUntil = true
+				} else {
+					t, err := parseOptTime(deferStr)
+					if err != nil {
+						return err
+					}
+					u.DeferUntil = t
 				}
-				u.DeferUntil = t
 			}
 			if claim {
 				me := assigneeFromEnv()

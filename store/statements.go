@@ -262,6 +262,16 @@ func (s *Store) createStatementTx(ctx context.Context, st *beads.Statement, upd 
 		if err := applyIssueUpdateTx(ctx, tx, s, *st.IssueID, *upd); err != nil {
 			return err
 		}
+		// Parked label (and any future AddLabels) must land in the same tx.
+		for _, l := range upd.AddLabels {
+			q := s.rebind(`INSERT INTO labels (issue_id, label) VALUES (?, ?)`)
+			if _, err := tx.ExecContext(ctx, q, *st.IssueID, l); err != nil {
+				if isUniqueViolation(err) {
+					continue
+				}
+				return err
+			}
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -323,7 +333,9 @@ func applyIssueUpdateTx(ctx context.Context, tx *sql.Tx, s *Store, issueID strin
 	if u.DueAt != nil {
 		add("due_at", *u.DueAt)
 	}
-	if u.DeferUntil != nil {
+	if u.ClearDeferUntil {
+		sets = append(sets, "defer_until=NULL")
+	} else if u.DeferUntil != nil {
 		add("defer_until", *u.DeferUntil)
 	}
 	if u.StartedAt != nil {
@@ -335,7 +347,11 @@ func applyIssueUpdateTx(ctx context.Context, tx *sql.Tx, s *Store, issueID strin
 	if u.Pinned != nil {
 		add("pinned", boolToInt64(*u.Pinned))
 	}
+	if len(sets) == 0 && len(u.AddLabels) == 0 {
+		return nil
+	}
 	if len(sets) == 0 {
+		// Only labels to add — no row update needed; caller will insert labels.
 		return nil
 	}
 	add("updated_at", time.Now().UTC())
