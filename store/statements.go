@@ -701,3 +701,20 @@ func scanStatementRows(rows *sql.Rows) (*beads.Statement, error) {
 		Evidence:        evidence,
 	}, nil
 }
+
+func (s *Store) ListAllComments(ctx context.Context) ([]beads.Comment, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, issue_id, author, text, created_at FROM comments ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []beads.Comment
+	for rows.Next() {
+		var c beads.Comment
+		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

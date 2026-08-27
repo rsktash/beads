@@ -63,6 +63,8 @@ func newRoot() *cobra.Command {
 		newRulingCmd(),
 		newQuestionCmd(),
 		newFindingCmd(),
+		newRulingsCmd(),
+		newSettledCmd(),
 	)
 	return root
 }
