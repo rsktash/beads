@@ -140,6 +140,16 @@ func TestQuestionClose_SupersededWritesSupersededStatus(t *testing.T) {
 	if !ok || reason != "superseded" || note != "reframed after reading the code" {
 		t.Fatalf("closure record wrong: %q", got.Evidence)
 	}
+	// The reason and the status are the same word here; the line must not double it.
+	line := formatClosedQuestionLine(*got, map[string]string{replacement: "question"})
+	if strings.Contains(line, "superseded (superseded)") {
+		t.Fatalf("the reason must not repeat the status, got %q", line)
+	}
+	for _, want := range []string{"superseded", "question: " + replacement, "reframed after reading the code"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("line must contain %q, got %q", want, line)
+		}
+	}
 }
 
 func TestQuestionClose_ExecutorRefusedAndNothingWritten(t *testing.T) {

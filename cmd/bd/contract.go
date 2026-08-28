@@ -103,7 +103,9 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 func formatClosedQuestionLine(q beads.Statement, answerKinds map[string]string) string {
 	line := fmt.Sprintf("  %s  %s  %s", q.ID, q.CreatedAt.Format("2006-01-02"), q.Status)
 	reason, note, isClosure := decodeClosure(q.Evidence)
-	if isClosure {
+	// The superseded reason writes the status of the same name; printing both
+	// would read as "superseded (superseded)".
+	if isClosure && reason != q.Status {
 		line += fmt.Sprintf(" (%s)", reason)
 	}
 	if q.AnsweredBy != nil && *q.AnsweredBy != "" {
