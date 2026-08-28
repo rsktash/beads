@@ -340,7 +340,7 @@ func TestQuestionAnswer_Success(t *testing.T) {
 	// Capture ruling before
 	rBefore := getStatementQF(t, dsn, rID)
 	_ = st.Close()
-	t.Setenv("BD_ACTOR", "executor")
+	t.Setenv("BD_ACTOR", "coordinator")
 	out, _, err := runQuestionCmd(t, []string{"answer", qID, "--ruling", rID})
 	if err != nil {
 		t.Fatalf("answer should succeed: %v out %q", err, out)
@@ -378,7 +378,7 @@ func TestQuestionAnswer_NonExistentQuestionFails(t *testing.T) {
 	}
 	_ = st.Close()
 	before := countStatementsQF(t, dsn)
-	t.Setenv("BD_ACTOR", "executor")
+	t.Setenv("BD_ACTOR", "coordinator")
 	_, _, err := runQuestionCmd(t, []string{"answer", "Q-9999", "--ruling", r.ID})
 	if err == nil {
 		t.Fatalf("answering non-existent question should fail")
@@ -404,7 +404,7 @@ func TestQuestionAnswer_NonExistentRulingFails(t *testing.T) {
 	before := countStatementsQF(t, dsn)
 	// Capture question before
 	qBefore := getStatementQF(t, dsn, q.ID)
-	t.Setenv("BD_ACTOR", "executor")
+	t.Setenv("BD_ACTOR", "coordinator")
 	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", "R-9999"})
 	if err == nil {
 		t.Fatalf("answering with non-existent ruling should fail")
@@ -436,7 +436,7 @@ func TestQuestionAnswer_NotAQuestionFails(t *testing.T) {
 	}
 	_ = st.Close()
 	before := countStatementsQF(t, dsn)
-	t.Setenv("BD_ACTOR", "executor")
+	t.Setenv("BD_ACTOR", "coordinator")
 	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", r.ID})
 	if err == nil {
 		t.Fatalf("answering a finding (not a question) should fail")
@@ -477,7 +477,7 @@ func TestQuestionAnswer_AlreadyAnsweredFails(t *testing.T) {
 		t.Fatalf("first answer: %v", err)
 	}
 	_ = st.Close()
-	t.Setenv("BD_ACTOR", "executor")
+	t.Setenv("BD_ACTOR", "coordinator")
 	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", r2.ID})
 	if err == nil {
 		t.Fatalf("answering already answered question should fail")
@@ -505,7 +505,7 @@ func TestQuestionAnswer_RulingNotRulingFails(t *testing.T) {
 		t.Fatalf("create finding: %v", err)
 	}
 	_ = st.Close()
-	t.Setenv("BD_ACTOR", "executor")
+	t.Setenv("BD_ACTOR", "coordinator")
 	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", f.ID})
 	if err == nil {
 		t.Fatalf("answering with a finding as ruling should fail")
@@ -578,7 +578,7 @@ func TestQuestionAnswer_JsonPrintsUpdated(t *testing.T) {
 		t.Fatalf("create r: %v", err)
 	}
 	_ = st.Close()
-	t.Setenv("BD_ACTOR", "executor")
+	t.Setenv("BD_ACTOR", "coordinator")
 	old := flagJSON
 	flagJSON = true
 	t.Cleanup(func() { flagJSON = old })

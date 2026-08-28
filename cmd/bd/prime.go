@@ -30,10 +30,10 @@ state, not free-form notes.
 
 ## Statements — typed authority (rulings/questions/findings)
 
-- Filing: ` + "`bd ruling add [<id>] \"text\" [--supersedes R-x] [--answers Q-x] [--scope self] [--defer <RFC3339>|--park|--close]`" + `, ` + "`bd question add <id> \"text\"`" + `, ` + "`bd question answer Q-x --ruling R-y`" + `, ` + "`bd finding add <id> \"text\" [--evidence \"refs\"]`" + `. --park defers the bead to far future (defer_until=9999-12-31) and adds label 'parked' (deferred+parked, excluded from ready); --defer sets defer_until; --close closes.
+- Filing: ` + "`bd ruling add [<id>] \"text\" [--supersedes R-x] [--answers Q-x] [--scope self] [--defer <RFC3339>|--park|--close]`" + `, ` + "`bd question add <id> \"text\"`" + `, ` + "`bd question answer Q-x --ruling R-y|--finding F-y`" + `, ` + "`bd question close Q-x --reason moot|duplicate|superseded --note \"why\" [--of Q-z]`" + `, ` + "`bd finding add <id> \"text\" [--evidence \"refs\"]`" + `. --park defers the bead to far future (defer_until=9999-12-31) and adds label 'parked' (deferred+parked, excluded from ready); --defer sets defer_until; --close closes.
 - Query: ` + "`bd rulings`" + `, ` + "`bd rulings --scope project`" + `, ` + "`bd settled <keywords>`" + `, ` + "`bd statements backfill`" + `.
-- Actor gating: An executor context cannot file a ruling, and may file questions and findings.
-- Consequences: An active ruling is binding and must not be re-litigated. An open question removes the bead from ` + "`bd ready`" + ` until it is answered. A parked bead is deferred with label 'parked' and absent from ` + "`bd ready`" + `; un-park via ` + "`bd update <id> --defer \"\"`" + ` (clear) and ` + "`bd label rm <id> parked`" + `.
+- Actor gating: An executor context cannot file a ruling, and cannot answer or close a question; it may file questions and findings. Closing a blocker is an owner or coordinator act.
+- Consequences: An active ruling is binding and must not be re-litigated. An open question removes the bead from ` + "`bd ready`" + ` until it is answered or closed; a closed question is never deleted and keeps rendering under CLOSED QUESTIONS — NO LONGER BLOCKING. A parked bead is deferred with label 'parked' and absent from ` + "`bd ready`" + `; un-park via ` + "`bd update <id> --defer \"\"`" + ` (clear) and ` + "`bd label rm <id> parked`" + `.
 - Tiers: statements are the authority tier, untyped comments are the advisory tier — use a statement where a ruling, question, or finding is the right record; do not use an untyped comment where a statement is the right record.
 
 ## Capture
@@ -45,7 +45,7 @@ state, not free-form notes.
 
 ## Reading (token-aware)
 
-- ` + "`bd show <id>`" + ` renders the execution contract in this order: ` + "`CONTRACT`" + `, ` + "`ACTIVE RULINGS — MUST OBEY`" + `, ` + "`OPEN QUESTIONS — EXECUTION BLOCKERS`" + `, ` + "`FINDINGS`" + `, ` + "`BASE TEXT`" + `, ` + "`DEPENDENCIES`" + `, ` + "`NOTES / UNTYPED HISTORY`" + `.
+- ` + "`bd show <id>`" + ` renders the execution contract in this order: ` + "`CONTRACT`" + `, ` + "`ACTIVE RULINGS — MUST OBEY`" + `, ` + "`OPEN QUESTIONS — EXECUTION BLOCKERS`" + `, ` + "`CLOSED QUESTIONS — NO LONGER BLOCKING`" + `, ` + "`FINDINGS`" + `, ` + "`BASE TEXT`" + `, ` + "`DEPENDENCIES`" + `, ` + "`NOTES / UNTYPED HISTORY`" + `.
   Long descriptions print an outline; pass ` + "`--full`" + ` for the body or ` + "`--section <slug>`" + ` for one heading.
 - ` + "`bd get <id> <field>`" + ` — single field, raw, no jq. ` + "`bd get <id> fields`" + ` lists names.
 - ` + "`bd show <id> --full`" + ` — full description body (also ` + "`--head N`" + `, ` + "`--tail N`" + `, ` + "`--lines START-END`" + `).

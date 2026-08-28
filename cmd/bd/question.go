@@ -65,20 +65,47 @@ func newQuestionAddCmd() *cobra.Command {
 }
 
 func newQuestionAnswerCmd() *cobra.Command {
-	var rulingID string
+	var (
+		rulingID  string
+		findingID string
+	)
 	cmd := &cobra.Command{
-		Use:   "answer <question-id>",
-		Short: "Answer a question with a ruling",
-		Long:  `Mark a question as answered by a ruling. Sets the question's answered_by to the ruling id and its status to answered.`,
-		Args:  cobra.ExactArgs(1),
+		Use:   "answer <question-id> --ruling <id> | --finding <id>",
+		Short: "Answer a question with a ruling or a finding (actor-gated: BD_ACTOR=executor is refused)",
+		Long: `Mark a question as answered. Sets the question's answered_by to the named statement and its status to answered.
+
+--ruling names a ruling: a judgment settled the question.
+--finding names a finding: evidence settled it, and no ruling is minted. Use this
+when nobody decided anything and the answer is what the evidence already says.
+
+The two flags are mutually exclusive, and each is checked against the kind it
+names, so an evidence-settled question stays distinguishable from a ruled one.
+
+Actor gating: BD_ACTOR=executor cannot answer questions; an executor files the finding and leaves the question open. BD_ACTOR=coordinator or unset (owner) is allowed.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			identity, isExecutor := resolveActor()
+			if isExecutor {
+				return executorRefusal(identity)
+			}
+
 			questionID := strings.TrimSpace(args[0])
 			if questionID == "" {
 				return fmt.Errorf("question id is required")
 			}
 			rid := strings.TrimSpace(rulingID)
-			if rid == "" {
-				return fmt.Errorf("--ruling is required")
+			fid := strings.TrimSpace(findingID)
+			if rid != "" && fid != "" {
+				return fmt.Errorf("--ruling and --finding are mutually exclusive")
+			}
+			// answerID is the statement that settles the question; answerKind is the
+			// kind the caller's flag claims it is, and the row must match it.
+			answerID, answerKind := rid, "ruling"
+			if fid != "" {
+				answerID, answerKind = fid, "finding"
+			}
+			if answerID == "" {
+				return fmt.Errorf("--ruling or --finding is required")
 			}
 			cc, err := openStore(cmd)
 			if err != nil {
@@ -101,17 +128,17 @@ func newQuestionAnswerCmd() *cobra.Command {
 				}
 				return fmt.Errorf("question %s already answered by %s", questionID, answeredBy)
 			}
-			// Fetch ruling and validate.
-			r, err := cc.store.GetStatement(cc.ctx, rid)
+			// Fetch the answering statement and validate its kind against the flag.
+			a, err := cc.store.GetStatement(cc.ctx, answerID)
 			if err != nil {
-				return fmt.Errorf("ruling %s not found: %w", rid, err)
+				return fmt.Errorf("%s %s not found: %w", answerKind, answerID, err)
 			}
-			if r.Kind != "ruling" {
-				return fmt.Errorf("statement %s is not a ruling (is %s)", rid, r.Kind)
+			if a.Kind != answerKind {
+				return fmt.Errorf("statement %s is not a %s (is %s)", answerID, answerKind, a.Kind)
 			}
 
 			// Perform update.
-			if err := cc.store.SetAnsweredBy(cc.ctx, questionID, rid); err != nil {
+			if err := cc.store.SetAnsweredBy(cc.ctx, questionID, answerID); err != nil {
 				return err
 			}
 			// Fetch updated question for output.
@@ -126,7 +153,7 @@ func newQuestionAnswerCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&rulingID, "ruling", "", "ruling id that answers the question (required)")
-	_ = cmd.MarkFlagRequired("ruling")
+	cmd.Flags().StringVar(&rulingID, "ruling", "", "ruling id that answers the question (exclusive with --finding)")
+	cmd.Flags().StringVar(&findingID, "finding", "", "finding id whose evidence answers the question (exclusive with --ruling)")
 	return cmd
 }
