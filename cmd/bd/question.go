@@ -18,6 +18,7 @@ func newQuestionCmd() *cobra.Command {
 	root.AddCommand(newQuestionAddCmd())
 	root.AddCommand(newQuestionAnswerCmd())
 	root.AddCommand(newQuestionCloseCmd())
+	root.AddCommand(newQuestionListCmd())
 	return root
 }
 
