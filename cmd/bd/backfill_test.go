@@ -122,10 +122,11 @@ func addBackfillComment(t *testing.T, st *store.Store, issueID, text string) *be
 	return c
 }
 
-// TestBackfill_AllFourMarkers ensures each of the four markers yields a candidate, one per comment.
-func TestBackfill_AllFourMarkers(t *testing.T) {
+// TestBackfill_ShoutedMarkers ensures each shouted authority marker yields a
+// candidate (one per comment), while a coordinator-only comment mints nothing.
+func TestBackfill_ShoutedMarkers(t *testing.T) {
 	dsn, st := newTempBackfillStore(t, "bd")
-	// Create 4 separate issues, each with one marker comment.
+	// Three shouted-marker beads, plus one coordinator-only bead that must not mint.
 	i1 := mkBackfillIssue(t, st, "owner ruling bead")
 	c1 := addBackfillComment(t, st, i1.ID, "OWNER RULING: we decided X")
 	i2 := mkBackfillIssue(t, st, "ruled bead")
@@ -141,13 +142,13 @@ func TestBackfill_AllFourMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backfill: %v out %q", err, out)
 	}
-	// Expect 4 candidates irrespective of count wording, ensure count string contains 4.
-	if !strings.Contains(out, "4") {
-		t.Fatalf("expected count 4 in output, got %q", out)
+	// Expect 3 candidates: coordinator-only comment does not mint.
+	if !strings.Contains(out, "3") {
+		t.Fatalf("expected count 3 in output, got %q", out)
 	}
 	list := backfillListStatements(t, dsn)
-	if len(list) != 4 {
-		t.Fatalf("expected exactly 4 candidates, got %d %+v out %q", len(list), list, out)
+	if len(list) != 3 {
+		t.Fatalf("expected exactly 3 candidates, got %d %+v out %q", len(list), list, out)
 	}
 	// Each marker has its own assertion: find candidate linked to each comment id.
 	bySrc := map[string]beads.Statement{}
@@ -164,23 +165,20 @@ func TestBackfill_AllFourMarkers(t *testing.T) {
 	if _, ok := bySrc[c2.ID]; !ok {
 		t.Fatalf("RULED: comment %s did not yield candidate", c2.ID)
 	}
-	// [coordinator]
-	if _, ok := bySrc[c3.ID]; !ok {
-		t.Fatalf("[coordinator] comment %s did not yield candidate, list %+v", c3.ID, list)
+	// [coordinator]-only must NOT mint.
+	if _, ok := bySrc[c3.ID]; ok {
+		t.Fatalf("coordinator-only comment %s should not yield candidate, list %+v", c3.ID, list)
 	}
 	// DEFERRED
 	if _, ok := bySrc[c4.ID]; !ok {
 		t.Fatalf("DEFERRED comment %s did not yield candidate", c4.ID)
 	}
-	// Also assert each candidate's text contains the marker? optional but ensures correct linkage.
+	// Also assert each candidate's text contains the marker.
 	if !strings.Contains(bySrc[c1.ID].Text, "OWNER RULING") {
 		t.Fatalf("candidate text for OWNER RULING should contain marker, got %q", bySrc[c1.ID].Text)
 	}
 	if !strings.Contains(bySrc[c2.ID].Text, "RULED:") {
 		t.Fatalf("candidate text for RULED: should contain marker, got %q", bySrc[c2.ID].Text)
-	}
-	if !strings.Contains(bySrc[c3.ID].Text, "[coordinator]") {
-		t.Fatalf("candidate text for coordinator should contain original text, got %q", bySrc[c3.ID].Text)
 	}
 	if !strings.Contains(bySrc[c4.ID].Text, "DEFERRED") {
 		t.Fatalf("candidate text for DEFERRED should contain marker, got %q", bySrc[c4.ID].Text)
@@ -194,8 +192,6 @@ func TestBackfill_KindAndStatus(t *testing.T) {
 	addBackfillComment(t, st, i1.ID, "OWNER RULING test")
 	i2 := mkBackfillIssue(t, st, "b")
 	addBackfillComment(t, st, i2.ID, "RULED: test")
-	i3 := mkBackfillIssue(t, st, "c")
-	addBackfillComment(t, st, i3.ID, "[coordinator] hi")
 	i4 := mkBackfillIssue(t, st, "d")
 	addBackfillComment(t, st, i4.ID, "DEFERRED foo")
 	_ = st.Close()
@@ -204,8 +200,8 @@ func TestBackfill_KindAndStatus(t *testing.T) {
 		t.Fatalf("backfill: %v", err)
 	}
 	list := backfillListStatements(t, dsn)
-	if len(list) != 4 {
-		t.Fatalf("expected 4, got %d", len(list))
+	if len(list) != 3 {
+		t.Fatalf("expected 3, got %d", len(list))
 	}
 	for _, s := range list {
 		if s.Kind != "ruling" {
@@ -225,7 +221,7 @@ func TestBackfill_SourceAndIssueLinkage(t *testing.T) {
 	dsn, st := newTempBackfillStore(t, "bd")
 	issues := []*beads.Issue{}
 	comments := []*beads.Comment{}
-	for idx, txt := range []string{"OWNER RULING link", "RULED: link", "[coordinator] link", "DEFERRED link"} {
+	for idx, txt := range []string{"OWNER RULING link", "RULED: link", "DEFERRED link"} {
 		iss := mkBackfillIssue(t, st, fmt.Sprintf("issue%d", idx))
 		issues = append(issues, iss)
 		c := addBackfillComment(t, st, iss.ID, txt)
@@ -237,8 +233,8 @@ func TestBackfill_SourceAndIssueLinkage(t *testing.T) {
 		t.Fatalf("backfill: %v", err)
 	}
 	list := backfillListStatements(t, dsn)
-	if len(list) != 4 {
-		t.Fatalf("expected 4, got %d", len(list))
+	if len(list) != 3 {
+		t.Fatalf("expected 3, got %d", len(list))
 	}
 	// Build map commentID -> issueID
 	commentIssue := map[string]string{}
@@ -512,37 +508,53 @@ func TestBackfill_CountAndJson(t *testing.T) {
 	_ = dsn3
 }
 
-// Coordinator tag case-insensitive via commentTag.
-func TestBackfill_CoordinatorCaseInsensitive(t *testing.T) {
+// A comment matching only the [coordinator] tag (any case, leading or not) mints
+// no candidate; a coordinator-tagged comment that also carries a shouted marker
+// still mints exactly one.
+func TestBackfill_CoordinatorTagOnlyMintsNothing(t *testing.T) {
 	dsn, st := newTempBackfillStore(t, "bd")
-	iss := mkBackfillIssue(t, st, "coordinator case")
-	c1 := addBackfillComment(t, st, iss.ID, "[Coordinator] upper C")
-	c2 := addBackfillComment(t, st, iss.ID, "[COORDINATOR] all caps")
-	c3 := addBackfillComment(t, st, iss.ID, "[coordinator] lower")
-	// Not leading should not match
-	c4 := addBackfillComment(t, st, iss.ID, "hello [coordinator] not leading")
+	iss := mkBackfillIssue(t, st, "coordinator only")
+	addBackfillComment(t, st, iss.ID, "[Coordinator] upper C")
+	addBackfillComment(t, st, iss.ID, "[COORDINATOR] all caps")
+	addBackfillComment(t, st, iss.ID, "[coordinator] lower")
+	addBackfillComment(t, st, iss.ID, "hello [coordinator] not leading")
+	// A coordinator-tagged comment that also carries a real marker still mints.
+	cMarked := addBackfillComment(t, st, iss.ID, "[coordinator] OWNER RULING keep this")
 	_ = st.Close()
 	_, _, err := runBackfillViaRoot(t, []string{})
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 	list := backfillListStatements(t, dsn)
-	if len(list) != 3 {
-		t.Fatalf("expected 3 coordinator candidates (case-insensitive leading only), got %d %+v", len(list), list)
+	if len(list) != 1 {
+		t.Fatalf("expected exactly 1 candidate (only the shouted-marker comment), got %d %+v", len(list), list)
 	}
-	bySrc := map[string]bool{}
-	for _, s := range list {
-		if s.SourceCommentID != nil {
-			bySrc[*s.SourceCommentID] = true
-		}
+	if list[0].SourceCommentID == nil || *list[0].SourceCommentID != cMarked.ID {
+		t.Fatalf("the sole candidate should come from the OWNER RULING comment %s, got %+v", cMarked.ID, list[0])
 	}
-	for _, c := range []*beads.Comment{c1, c2, c3} {
-		if !bySrc[c.ID] {
-			t.Fatalf("coordinator case %q should have candidate, missing", c.Text)
-		}
+}
+
+// --dry-run does not count coordinator-only comments; only the shouted marker counts.
+func TestBackfill_DryRun_CoordinatorOnlyNotCounted(t *testing.T) {
+	dsn, st := newTempBackfillStore(t, "bd")
+	iss := mkBackfillIssue(t, st, "dryrun coordinator")
+	addBackfillComment(t, st, iss.ID, "[coordinator] just a reader tag")
+	addBackfillComment(t, st, iss.ID, "[coordinator] another tag only")
+	addBackfillComment(t, st, iss.ID, "OWNER RULING the real one")
+	_ = st.Close()
+
+	out, _, err := runBackfillViaRoot(t, []string{"--dry-run"})
+	if err != nil {
+		t.Fatalf("dry-run: %v out %q", err, out)
 	}
-	if bySrc[c4.ID] {
-		t.Fatalf("non-leading [coordinator] should not match, but did for %q", c4.Text)
+	if !strings.Contains(out, "would create 1 candidates") {
+		t.Fatalf("dry-run should count only the shouted marker (1), got %q", out)
+	}
+	if strings.Contains(out, "reader tag") || strings.Contains(out, "another tag only") {
+		t.Fatalf("dry-run should not list coordinator-only comments, got %q", out)
+	}
+	if backfillCountStatements(t, dsn) != 0 {
+		t.Fatalf("dry-run must write nothing")
 	}
 }
 
@@ -645,16 +657,20 @@ func TestBackfill_DoesNotModifySourceComments(t *testing.T) {
 	}
 }
 
-// Ensure isBackfillCandidate reuses commentTag (case-insensitive for coordinator) and does not match non-leading.
-func TestIsBackfillCandidate_ReusesCommentTag(t *testing.T) {
-	if !isBackfillCandidate("[coordinator] text") {
-		t.Fatalf("should match lower")
+// The [coordinator] tag is a reader filter, not an authority marker: it mints
+// nothing on its own, but a shouted marker alongside it still matches.
+func TestIsBackfillCandidate_CoordinatorTagNotAMarker(t *testing.T) {
+	if isBackfillCandidate("[coordinator] text") {
+		t.Fatalf("coordinator-only should not match")
 	}
-	if !isBackfillCandidate("[Coordinator] text") {
-		t.Fatalf("should match via commentTag lowercasing")
+	if isBackfillCandidate("[Coordinator] text") {
+		t.Fatalf("coordinator-only (any case) should not match")
 	}
-	if isBackfillCandidate("prefix [coordinator]") {
-		t.Fatalf("non-leading should not match via commentTag")
+	if !isBackfillCandidate("[coordinator] OWNER RULING keep") {
+		t.Fatalf("coordinator tag with a shouted marker should still match")
+	}
+	if !isBackfillCandidate("OWNER RULING plain") {
+		t.Fatalf("shouted marker should match")
 	}
 	if isBackfillCandidate("the ruling was unclear") {
 		t.Fatalf("should not over-match")

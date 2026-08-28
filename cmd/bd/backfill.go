@@ -17,11 +17,16 @@ func newStatementsCmd() *cobra.Command {
 		Short: "Manage statements (candidate backfill)",
 	}
 	root.AddCommand(newStatementsBackfillCmd())
+	root.AddCommand(newStatementsPromoteCmd())
+	root.AddCommand(newStatementsListCmd())
 	return root
 }
 
-// isBackfillCandidate reports whether a comment body carries a legacy marker.
-// Case-sensitive for shouted forms; coordinator form is via commentTag (case-insensitive, leading tag only).
+// isBackfillCandidate reports whether a comment body carries a legacy authority
+// marker. Case-sensitive for the shouted forms. The leading [coordinator] tag is
+// a reader filter, not an authority marker, so it does NOT mint a candidate on
+// its own; a coordinator-tagged comment still matches when it also carries a
+// shouted marker.
 func isBackfillCandidate(text string) bool {
 	if strings.Contains(text, "OWNER RULING") {
 		return true
@@ -30,9 +35,6 @@ func isBackfillCandidate(text string) bool {
 		return true
 	}
 	if strings.Contains(text, "DEFERRED") {
-		return true
-	}
-	if commentTag(text) == "coordinator" {
 		return true
 	}
 	return false
@@ -50,7 +52,9 @@ Markers (one candidate per matching comment, even if multiple markers match):
   - OWNER RULING  (case-sensitive substring)
   - RULED:        (case-sensitive substring)
   - DEFERRED      (case-sensitive substring)
-  - leading [coordinator] tag (case-insensitive, reuse of commentTag)
+
+A leading [coordinator] tag is a reader filter, not an authority marker, and
+does not mint a candidate on its own.
 
 Each emitted row has kind "ruling" and status "candidate", linked to the
 source comment via source_comment_id. The command never promotes candidates
