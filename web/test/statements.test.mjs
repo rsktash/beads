@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openRoot } from '../server/db.js';
-import { getIssue, listIssues, readyIssues, listStatements, listComments, listLabels, listDependencies } from '../server/queries.js';
+import { getIssue, listIssues, readyIssues, listStatements, listAnsweredQuestions, listComments, listLabels, listDependencies } from '../server/queries.js';
 import { rowToIssue } from '../server/types.js';
 import { createFixture, cleanupFixture } from './fixture.mjs';
 
@@ -120,6 +120,24 @@ async function runSuite(rawDsn, label) {
       const viewRows = await db.all(`SELECT * FROM resolved_statements WHERE issue_id = ? AND kind = 'ruling'`, [ids.supersededBead]);
       assert.equal(viewRows.length, 1, `[${label}] view should have 1 ruling for supersededBead`);
       assert.equal(viewRows[0].statement_id, 'R-7');
+    }
+
+    // ---- Answered question: absent from the active view, returned by listAnsweredQuestions paired with its ruling ----
+    {
+      const active = await listStatements(db, ids.answeredBead);
+      const activeIds = active.map(s => s.statement_id);
+      assert(!activeIds.includes('Q-4'), `[${label}] answered Q-4 should not appear in active statements`);
+      assert(activeIds.includes('R-8'), `[${label}] answering ruling R-8 should still appear active`);
+
+      const answered = await listAnsweredQuestions(db, ids.answeredBead);
+      assert.equal(answered.length, 1, `[${label}] one answered question expected`);
+      assert.equal(answered[0].statement_id, 'Q-4', `[${label}] answered question is Q-4`);
+      assert.equal(answered[0].answered_by, 'R-8', `[${label}] Q-4 answered_by R-8`);
+      assert.equal(answered[0].text, 'answered question', `[${label}] answered text carried`);
+
+      // A bead with no answered questions returns an empty list.
+      const none = await listAnsweredQuestions(db, ids.countsBead);
+      assert.equal(none.length, 0, `[${label}] countsBead has no answered questions`);
     }
 
     // ---- Counts: on bead with two in-force rulings and one active question slim row reports ruling_count 2 and open_question_count 1; on bead with no statements both are 0 ----

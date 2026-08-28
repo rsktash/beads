@@ -214,6 +214,27 @@ export async function listStatements(db, issueId) {
   return rows.map(rowToStatement);
 }
 
+// Answered questions leave the resolved_statements view (it keeps only active
+// rows), so the pairing that `question answer` recorded — question.answered_by →
+// ruling — would vanish from the page. Return the answered questions directly so
+// the client can pair each with the ruling that resolved it.
+export async function listAnsweredQuestions(db, issueId) {
+  const rows = await db.all(
+    `SELECT id AS statement_id, text, created_at, answered_by
+       FROM statements
+      WHERE issue_id = ? AND kind = 'question' AND status = 'answered'
+        AND answered_by IS NOT NULL
+      ORDER BY created_at ASC, id ASC`,
+    [issueId],
+  );
+  return rows.map((r) => ({
+    statement_id: r.statement_id,
+    text: r.text,
+    created_at: r.created_at ?? null,
+    answered_by: r.answered_by,
+  }));
+}
+
 export async function readyIssues(db) {
   const sql = `
     SELECT ${ENRICHED_SLIM} FROM issues i${STATEMENT_COUNTS_JOIN}

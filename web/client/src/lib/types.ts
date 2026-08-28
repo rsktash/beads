@@ -99,6 +99,15 @@ export interface Statement {
   origin_issue_id: string | null;
 }
 
+// A question that a ruling has resolved. answered_by is the ruling's statement_id,
+// so the issue page can pair each ruling with the question it answered.
+export interface AnsweredQuestion {
+  statement_id: string;
+  text: string;
+  created_at: string | null;
+  answered_by: string;
+}
+
 export interface Me {
   user: { username: string; role: string };
   driver: "sqlite" | "postgres";

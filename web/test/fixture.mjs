@@ -95,6 +95,7 @@ export async function createFixture(rawDsn) {
   const countsBead = bdCreate('Counts Bead', { type: 'task', priority: 1 });
   const supersededBead = bdCreate('Superseded Bead', { type: 'task', priority: 1 });
   const commentBead = bdCreate('Comment Bead', { type: 'task', priority: 2 });
+  const answeredBead = bdCreate('Answered Bead', { type: 'task', priority: 1 });
 
   // Insert statements and comments through openRoot adapter (one code path for both engines)
   const root = await openRoot(dsn);
@@ -105,10 +106,10 @@ export async function createFixture(rawDsn) {
     return new Date(baseTime + ms).toISOString();
   }
 
-  async function insertStatement({ id, kind, issueId, text, createdAt, filedBy = 'tester', status = 'active', scope = 'inherit', supersedesId = null, evidence = '' }) {
+  async function insertStatement({ id, kind, issueId, text, createdAt, filedBy = 'tester', status = 'active', scope = 'inherit', supersedesId = null, evidence = '', answeredBy = null }) {
     await db.exec(
-      `INSERT INTO statements (id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, kind, issueId, text, createdAt, filedBy, status, scope, supersedesId, evidence]
+      `INSERT INTO statements (id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, evidence, answered_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, kind, issueId, text, createdAt, filedBy, status, scope, supersedesId, evidence, answeredBy]
     );
   }
 
@@ -135,6 +136,11 @@ export async function createFixture(rawDsn) {
   await insertStatement({ id: 'R-7', kind: 'ruling', issueId: supersededBead.id, text: 'new terminal', createdAt: isoOffset(10000), supersedesId: 'R-6' });
   await db.exec(`UPDATE statements SET status = 'superseded' WHERE id = ?`, ['R-6']);
 
+  // Answered bead: R-8 rules, Q-4 is a question answered by R-8 (status answered).
+  // Q-4 must be absent from the active view but returned by listAnsweredQuestions.
+  await insertStatement({ id: 'R-8', kind: 'ruling', issueId: answeredBead.id, text: 'ruling that answers Q-4', createdAt: isoOffset(10500), scope: 'inherit' });
+  await insertStatement({ id: 'Q-4', kind: 'question', issueId: answeredBead.id, text: 'answered question', createdAt: isoOffset(10600), status: 'answered', answeredBy: 'R-8' });
+
   // Comment bead: one comment, no statements
   await db.exec(`INSERT INTO comments (id, issue_id, author, text, created_at) VALUES (?, ?, ?, ?, ?)`, ['c-1', commentBead.id, 'alice', 'legacy comment', isoOffset(11000)]);
   // Also add a second comment for legacy gate? one is enough
@@ -160,6 +166,7 @@ export async function createFixture(rawDsn) {
       countsBead: countsBead.id,
       supersededBead: supersededBead.id,
       commentBead: commentBead.id,
+      answeredBead: answeredBead.id,
     },
   };
 }

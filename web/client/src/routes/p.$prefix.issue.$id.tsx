@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Link } from "../lib/router";
-import type { Comment, Issue, Statement } from "../lib/types";
+import type { AnsweredQuestion, Comment, Issue, Statement } from "../lib/types";
 import { OriginChip, PriorityBadge, StatusBadge, TypeBadge } from "../components/badges";
 import { CopyId } from "../components/CopyId";
 import { Markdown } from "../components/Markdown";
@@ -61,11 +61,19 @@ function IssueDetail() {
   if (q.error)     return <div className="text-red-600">{(q.error as Error).message}</div>;
   if (!q.data)     return null;
 
-  const { issue, labels, dependencies, comments, blocked_by, blocks, children, statements: rawStatements } = q.data as typeof q.data & { statements: Statement[] };
+  const { issue, labels, dependencies, comments, blocked_by, blocks, children, statements: rawStatements, answered_questions: rawAnswered } = q.data as typeof q.data & { statements: Statement[]; answered_questions: AnsweredQuestion[] };
   const statements: Statement[] = (rawStatements ?? []) as Statement[];
+  const answeredQuestions: AnsweredQuestion[] = (rawAnswered ?? []) as AnsweredQuestion[];
   const rulings = statements.filter((s) => s.kind === "ruling");
   const questions = statements.filter((s) => s.kind === "question");
   const findings = statements.filter((s) => s.kind === "finding");
+  // Pair each ruling with the questions it resolved (question.answered_by → ruling).
+  const answeredByRuling = new Map<string, AnsweredQuestion[]>();
+  for (const aq of answeredQuestions) {
+    const list = answeredByRuling.get(aq.answered_by) ?? [];
+    list.push(aq);
+    answeredByRuling.set(aq.answered_by, list);
+  }
 
   return (
     <div className="flex h-full -m-6">
@@ -125,6 +133,16 @@ function IssueDetail() {
                   <span className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ background: "color-mix(in srgb, var(--color-accent) 12%, transparent)", color: "var(--color-accent)" }}>{s.statement_id}</span>
                   <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
                   <OriginChip originKind={s.origin_kind} originIssueId={s.origin_issue_id} />
+                  {(answeredByRuling.get(s.statement_id) ?? []).map((aq) => (
+                    <span
+                      key={aq.statement_id}
+                      className="text-[11px] rounded px-1.5 py-0.5 font-mono"
+                      style={{ background: "color-mix(in srgb, var(--color-status-blocked) 14%, transparent)", color: "var(--color-status-blocked)" }}
+                      title={aq.text}
+                    >
+                      answers {aq.statement_id}
+                    </span>
+                  ))}
                   <span className="flex-1 min-w-[12rem]" style={{ color: "var(--color-ink-primary)" }}>{s.text}</span>
                 </li>
               ))}
@@ -158,6 +176,23 @@ function IssueDetail() {
               ))}
             </ul>
           </div>
+        )}
+
+        {answeredQuestions.length > 0 && (
+          <Card label="Resolved Questions">
+            <ul className="space-y-2">
+              {answeredQuestions.map((aq) => (
+                <li key={aq.statement_id} className="flex flex-wrap items-start gap-2 text-sm">
+                  <span className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ background: "rgba(0,0,0,0.06)", color: "var(--color-ink-tertiary)" }}>{aq.statement_id}</span>
+                  <span className="text-xs" style={{ color: "var(--color-ink-tertiary)" }}>{aq.created_at ? new Date(aq.created_at).toLocaleDateString() : ""}</span>
+                  <span className="flex-1 min-w-[12rem] line-through" style={{ color: "var(--color-ink-tertiary)" }}>{aq.text}</span>
+                  <span className="text-[11px] rounded px-1.5 py-0.5 font-mono" style={{ background: "color-mix(in srgb, var(--color-accent) 12%, transparent)", color: "var(--color-accent)" }} title="answered by ruling">
+                    → {aq.answered_by}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
         )}
 
         {findings.length > 0 && (
