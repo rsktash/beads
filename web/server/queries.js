@@ -38,9 +38,24 @@ const ENRICHED_COMPUTED = `
       AND b.status NOT IN ('closed', 'pinned')
     ORDER BY b.created_at LIMIT 1) AS blocked_by_title,
   (SELECT COUNT(*) FROM comments c WHERE c.issue_id = i.id) AS comment_count,
-  (SELECT COUNT(*) FROM resolved_statements rs WHERE rs.issue_id = i.id AND rs.kind = 'question') AS open_question_count,
-  (SELECT COUNT(*) FROM resolved_statements rs WHERE rs.issue_id = i.id AND rs.kind = 'ruling') AS ruling_count
+  COALESCE(sc.open_question_count, 0) AS open_question_count,
+  COALESCE(sc.ruling_count, 0) AS ruling_count
 `;
+
+// resolved_statements is a recursive view whose ancestor walk reseeds from
+// every issue, so the outer `= i.id` filter cannot prune it: as a per-row
+// correlated subquery it re-materialises the whole view for each card, which is
+// quadratic on a large board. Aggregate the view ONCE and join the per-issue
+// counts in. Every SELECT that reads open_question_count or ruling_count must
+// add this join to its FROM (via STATEMENT_COUNTS_JOIN).
+const STATEMENT_COUNTS_JOIN = `
+  LEFT JOIN (
+    SELECT issue_id,
+      SUM(CASE WHEN kind = 'question' THEN 1 ELSE 0 END) AS open_question_count,
+      SUM(CASE WHEN kind = 'ruling'   THEN 1 ELSE 0 END) AS ruling_count
+    FROM resolved_statements
+    GROUP BY issue_id
+  ) sc ON sc.issue_id = i.id`;
 
 // Full row + enrichment — used by getIssue (detail page wants everything).
 const ENRICHED_FULL = `i.*, ${ENRICHED_COMPUTED}`;
@@ -93,7 +108,7 @@ export async function listIssues(db, filters = {}, limit = 0) {
     where.push('i.priority = ?');
     args.push(Number(filters.priority));
   }
-  let sql = `SELECT ${ENRICHED_SLIM} FROM issues i`;
+  let sql = `SELECT ${ENRICHED_SLIM} FROM issues i${STATEMENT_COUNTS_JOIN}`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
   // ORDER BY: priority is irrelevant once an issue is closed — caller can ask
   // for closed_at_desc to get a "recently finished" feed. Default keeps
@@ -111,7 +126,7 @@ export async function listIssues(db, filters = {}, limit = 0) {
 }
 
 export async function getIssue(db, id) {
-  const sql = `SELECT ${ENRICHED_FULL} FROM issues i WHERE i.id = ?`;
+  const sql = `SELECT ${ENRICHED_FULL} FROM issues i${STATEMENT_COUNTS_JOIN} WHERE i.id = ?`;
   const r = await db.one(sql, [id]);
   return r ? rowToIssue(r) : null;
 }
@@ -201,7 +216,7 @@ export async function listStatements(db, issueId) {
 
 export async function readyIssues(db) {
   const sql = `
-    SELECT ${ENRICHED_SLIM} FROM issues i
+    SELECT ${ENRICHED_SLIM} FROM issues i${STATEMENT_COUNTS_JOIN}
     WHERE i.status = 'open'
       AND i.ephemeral = 0
       AND i.is_template = 0
@@ -214,8 +229,9 @@ export async function readyIssues(db) {
             AND blocker.status NOT IN ('closed', 'pinned')
       )
       AND NOT EXISTS (
-          SELECT 1 FROM resolved_statements rs
-           WHERE rs.issue_id = i.id AND rs.kind = 'question'
+          SELECT 1 FROM statements s
+           WHERE s.issue_id = i.id AND s.kind = 'question' AND s.status = 'active'
+             AND NOT EXISTS (SELECT 1 FROM statements s2 WHERE s2.supersedes_id = s.id)
       )
     ORDER BY i.priority ASC, i.updated_at DESC NULLS LAST`;
   const now = new Date().toISOString();
