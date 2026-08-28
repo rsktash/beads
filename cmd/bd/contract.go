@@ -14,7 +14,7 @@ import (
 // metadata header. It is the single source of truth for body, dependencies
 // and untyped history rendering; both printShowHuman and workfile go through it.
 func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractView, deps []beads.Dependency, comments []beads.Comment, opts showOpts) error {
-	hasStatements := len(cv.Rulings) > 0 || len(cv.Questions) > 0 || len(cv.Findings) > 0
+	hasStatements := len(cv.Rulings) > 0 || len(cv.Questions) > 0 || len(cv.Findings) > 0 || len(cv.ClosedQuestions) > 0
 
 	// Sort comments newest first for both placements.
 	sorted := make([]beads.Comment, len(comments))
@@ -58,6 +58,12 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 			fmt.Fprintf(w, "  %s  %s  %s\n", q.ID, q.CreatedAt.Format("2006-01-02"), q.Text)
 		}
 	}
+	if len(cv.ClosedQuestions) > 0 {
+		fmt.Fprintln(w, "\nCLOSED QUESTIONS — NO LONGER BLOCKING")
+		for _, q := range cv.ClosedQuestions {
+			fmt.Fprintln(w, formatClosedQuestionLine(q, cv.AnswerKinds))
+		}
+	}
 	if len(cv.Findings) > 0 {
 		fmt.Fprintln(w, "\nFINDINGS")
 		for _, f := range cv.Findings {
@@ -89,6 +95,29 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 	}
 
 	return nil
+}
+
+// formatClosedQuestionLine renders one question that has stopped blocking. It
+// must show enough that a reader never has to look an id up: how it stopped
+// blocking, why, and what settled it.
+func formatClosedQuestionLine(q beads.Statement, answerKinds map[string]string) string {
+	line := fmt.Sprintf("  %s  %s  %s", q.ID, q.CreatedAt.Format("2006-01-02"), q.Status)
+	reason, note, isClosure := decodeClosure(q.Evidence)
+	if isClosure {
+		line += fmt.Sprintf(" (%s)", reason)
+	}
+	if q.AnsweredBy != nil && *q.AnsweredBy != "" {
+		kind := answerKinds[*q.AnsweredBy]
+		if kind == "" {
+			kind = "statement"
+		}
+		line += fmt.Sprintf("  %s: %s", kind, *q.AnsweredBy)
+	}
+	line += "  " + q.Text
+	if isClosure && note != "" {
+		line += fmt.Sprintf("  note: %s", note)
+	}
+	return line
 }
 
 func formatRulingLine(st beads.Statement, issueID string) string {

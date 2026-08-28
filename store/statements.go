@@ -24,6 +24,14 @@ type ContractView struct {
 	Rulings   []beads.Statement `json:"rulings"`
 	Questions []beads.Statement `json:"questions"`
 	Findings  []beads.Statement `json:"findings"`
+	// ClosedQuestions holds the bead's own questions that have stopped blocking.
+	// The resolved_statements view carries only active rows, and only rulings
+	// inherit past depth 0, so these are read separately and are never inherited.
+	ClosedQuestions []beads.Statement `json:"closed_questions,omitempty"`
+	// AnswerKinds maps an answered_by target id to its kind, so a renderer can
+	// say whether a ruling, a finding or another question settled the question
+	// without resolving ids itself.
+	AnswerKinds map[string]string `json:"answer_kinds,omitempty"`
 }
 
 // kindPrefix maps statement kind to its citable prefix.
@@ -395,10 +403,33 @@ func (s *Store) UpdateStatementStatus(ctx context.Context, id string, status str
 	return nil
 }
 
-// SetAnsweredBy links a question to its answering ruling and marks it answered.
-func (s *Store) SetAnsweredBy(ctx context.Context, questionID, rulingID string) error {
+// SetAnsweredBy links a question to the statement that answered it and marks it
+// answered. The target may be a ruling or a finding; answered_by carries no kind
+// constraint, and the caller enforces which kinds it accepts.
+func (s *Store) SetAnsweredBy(ctx context.Context, questionID, answerID string) error {
 	q := s.rebind(`UPDATE statements SET answered_by = ?, status = 'answered' WHERE id = ?`)
-	res, err := s.db.ExecContext(ctx, q, strPtrToNullString(rulingID), questionID)
+	res, err := s.db.ExecContext(ctx, q, strPtrToNullString(answerID), questionID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClosedQuestionStatuses are the statuses a question can hold once it has stopped
+// blocking. They are the complement of 'active' for questions.
+var ClosedQuestionStatuses = []string{"superseded", "answered", "retracted"}
+
+// CloseQuestion records a closure that mints no ruling: it writes the new status,
+// stores the reason and note in evidence, and links the surviving or replacing
+// question through answered_by when one was named. The UPDATE is guarded on the
+// row still being an active question, so a concurrent close cannot double-apply.
+func (s *Store) CloseQuestion(ctx context.Context, questionID, status, evidence, ofID string) error {
+	q := s.rebind(`UPDATE statements SET status = ?, evidence = ?, answered_by = ? WHERE id = ? AND kind = 'question' AND status = 'active'`)
+	res, err := s.db.ExecContext(ctx, q, status, evidence, strPtrToNullString(ofID), questionID)
 	if err != nil {
 		return err
 	}
@@ -571,10 +602,34 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 	if err := rows.Err(); err != nil {
 		return ContractView{}, err
 	}
+	closed, err := s.ListStatements(ctx, StatementFilter{
+		IssueIDs: []string{issueID},
+		Kinds:    []string{"question"},
+		Statuses: ClosedQuestionStatuses,
+	})
+	if err != nil {
+		return ContractView{}, err
+	}
+	answerKinds := map[string]string{}
+	for _, q := range closed {
+		if q.AnsweredBy == nil || *q.AnsweredBy == "" {
+			continue
+		}
+		if _, seen := answerKinds[*q.AnsweredBy]; seen {
+			continue
+		}
+		a, err := s.GetStatement(ctx, *q.AnsweredBy)
+		if err != nil {
+			continue
+		}
+		answerKinds[*q.AnsweredBy] = a.Kind
+	}
 	return ContractView{
-		Rulings:   rulings,
-		Questions: questions,
-		Findings:  findings,
+		Rulings:         rulings,
+		Questions:       questions,
+		Findings:        findings,
+		ClosedQuestions: closed,
+		AnswerKinds:     answerKinds,
 	}, nil
 }
 

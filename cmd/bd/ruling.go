@@ -42,16 +42,7 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 		RunE: func(cmd *cobra.Command, args []string) error {
 			identity, isExecutor := resolveActor()
 			if isExecutor {
-				// Extract actor word for message (before colon)
-				word := identity
-				if idx := strings.IndexByte(word, ':'); idx >= 0 {
-					word = word[:idx]
-				}
-				if word == "" {
-					word = "executor"
-				}
-				// Must name BD_ACTOR and what executor may file instead
-				return fmt.Errorf("BD_ACTOR=%s: executors cannot file rulings; executors may file findings or questions instead", word)
+				return executorRefusal(identity)
 			}
 
 			// Determine issue id and text
