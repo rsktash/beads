@@ -90,13 +90,31 @@ func Resolve(explicitDSN string) (*Config, error) {
 	}
 	if cfg.DSN == "" {
 		if !found {
-			return nil, errors.New("no .bd directory found — run `bd init` first")
+			return nil, NoBeadDirError()
 		}
 		cfg.DSN = filepath.Join(dir, defaultName)
 	}
 	cfg.DisplayDSN, _ = stripPassword(cfg.DSN)
 	cfg.DSN = injectPassword(cfg.DSN, lookupDBPassword(cfg.BeadDir))
 	return cfg, nil
+}
+
+// NoBeadDirError composes the error for "no .bd directory resolved anywhere
+// up from cwd". Exported so every caller that hits this exact condition —
+// Resolve itself, and cmd/bd sites that need a BeadDir after Resolve already
+// succeeded on an explicit --db/$BD_DB with no project on disk — raises the
+// same wording instead of composing its own.
+//
+// The condition is ambiguous by nature (a fresh directory with no project
+// yet, vs. an existing project whose root is somewhere else up the tree, vs.
+// a subdirectory the walk-up can't reach), so the message names every
+// remedy rather than guessing which one applies.
+func NoBeadDirError() error {
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "" {
+		cwd = "the current directory"
+	}
+	return fmt.Errorf("no .bd directory found (searched up from %s) — run `bd init` here, or if a project already exists, run bd from its repo root, or pass --db <path>", cwd)
 }
 
 // lookupDBPassword resolves the store DSN password from $BD_DB_PASSWORD or a .env file.

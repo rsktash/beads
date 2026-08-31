@@ -77,7 +77,7 @@ func main() {
 	root := newRoot()
 	root.SetContext(ctx)
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, "error:", remedyForError(err))
 		os.Exit(1)
 	}
 }
@@ -87,6 +87,7 @@ func openStore(cmd *cobra.Command) (*cmdCtx, error) {
 	if err != nil {
 		return nil, err
 	}
+	lastResolvedDSN = cfg.DisplayDSN
 	st, err := store.Open(cmd.Context(), cfg.DSN)
 	if err != nil {
 		return nil, err

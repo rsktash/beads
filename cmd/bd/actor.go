@@ -26,8 +26,18 @@ func resolveActor() (string, bool) {
 
 // executorRefusal is the single source of the executor refusal message. The
 // execution skills quote this string, so every actor-gated write path must
-// return it byte-for-byte rather than composing its own wording.
+// return it byte-for-byte rather than composing its own wording — hence one
+// fixed wording ("file rulings") even for callers gating a different verb
+// (e.g. `bd question close`): the point is a caller can recognize the
+// refusal from this one string alone, not that the verb matches the command.
 func executorRefusal(identity string) error {
+	word := actorWord(identity)
+	return fmt.Errorf("BD_ACTOR=%s: executors cannot file rulings; a coordinator or the owner (unset BD_ACTOR) may — executors may file findings or questions instead", word)
+}
+
+// actorWord is the bare actor token (before the ":user" suffix resolveActor
+// appends) that error messages report back to the caller.
+func actorWord(identity string) string {
 	word := identity
 	if idx := strings.IndexByte(word, ':'); idx >= 0 {
 		word = word[:idx]
@@ -35,5 +45,5 @@ func executorRefusal(identity string) error {
 	if word == "" {
 		word = "executor"
 	}
-	return fmt.Errorf("BD_ACTOR=%s: executors cannot file rulings; executors may file findings or questions instead", word)
+	return word
 }
