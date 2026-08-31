@@ -134,7 +134,7 @@ func TestQuestionAnswer_ExecutorRefusedAndNothingWritten(t *testing.T) {
 	_ = st.Close()
 
 	t.Setenv("BD_ACTOR", "executor")
-	want := "BD_ACTOR=executor: executors cannot file rulings; executors may file findings or questions instead"
+	want := "BD_ACTOR=executor: executors cannot file rulings; a coordinator or the owner (unset BD_ACTOR) may — executors may file findings or questions instead"
 	for _, args := range [][]string{
 		{"answer", qID, "--finding", fID},
 		{"answer", qID, "--ruling", rID},

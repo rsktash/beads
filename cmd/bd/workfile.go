@@ -45,7 +45,7 @@ func newWorkfileCmd() *cobra.Command {
 					return err
 				}
 				if cfg.BeadDir == "" {
-					return fmt.Errorf("no .bd directory found — run `bd init` first")
+					return config.NoBeadDirError()
 				}
 				scratchDir := filepath.Join(cfg.BeadDir, ".scratch")
 				if err := os.MkdirAll(scratchDir, 0o755); err != nil {

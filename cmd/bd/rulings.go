@@ -86,9 +86,16 @@ func newRulingsCmd() *cobra.Command {
 				return writeJSONTo(cmd.OutOrStdout(), rulings)
 			}
 
+			out := cmd.OutOrStdout()
+			terse := wantTerse(out)
+
 			if len(args) == 1 {
 				issueID := strings.TrimSpace(args[0])
 				for _, r := range rulings {
+					if terse {
+						fmt.Fprintln(out, terseRulingLine(r))
+						continue
+					}
 					date := r.CreatedAt.Format("2006-01-02")
 					prefix := fmt.Sprintf("%s  %s", r.ID, date)
 					if r.IssueID == nil {
@@ -96,16 +103,20 @@ func newRulingsCmd() *cobra.Command {
 					} else if *r.IssueID != issueID {
 						prefix += fmt.Sprintf("  [%s]", *r.IssueID)
 					}
-					fmt.Fprintf(cmd.OutOrStdout(), "%s  %s\n", prefix, r.Text)
+					fmt.Fprintf(out, "%s  %s\n", prefix, r.Text)
 				}
 			} else {
 				for _, r := range rulings {
+					if terse {
+						fmt.Fprintln(out, terseRulingLine(r))
+						continue
+					}
 					issueStr := "project"
 					if r.IssueID != nil && *r.IssueID != "" {
 						issueStr = *r.IssueID
 					}
 					date := r.CreatedAt.Format("2006-01-02")
-					fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  [%s]  %s\n", r.ID, date, issueStr, r.Text)
+					fmt.Fprintf(out, "%s  %s  [%s]  %s\n", r.ID, date, issueStr, r.Text)
 				}
 			}
 			return nil
@@ -113,4 +124,17 @@ func newRulingsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&scope, "scope", "", "filter scope: project (only project-scoped rulings)")
 	return cmd
+}
+
+// terseRulingLine renders the terse-mode row: id, scope marker, text — no
+// date, no decorative framing. The scope marker is always present (project
+// or the owning issue id), unlike the human render, which omits it when the
+// ruling belongs to the queried issue — terse output stays a fixed 3-field
+// shape a caller can parse without knowing which branch produced it.
+func terseRulingLine(r beads.Statement) string {
+	scope := "project"
+	if r.IssueID != nil && *r.IssueID != "" {
+		scope = *r.IssueID
+	}
+	return fmt.Sprintf("%s  [%s]  %s", r.ID, scope, r.Text)
 }

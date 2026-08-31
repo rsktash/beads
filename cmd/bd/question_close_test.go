@@ -164,7 +164,7 @@ func TestQuestionClose_ExecutorRefusedAndNothingWritten(t *testing.T) {
 	if err == nil {
 		t.Fatalf("executor must be refused")
 	}
-	want := "BD_ACTOR=executor: executors cannot file rulings; executors may file findings or questions instead"
+	want := "BD_ACTOR=executor: executors cannot file rulings; a coordinator or the owner (unset BD_ACTOR) may — executors may file findings or questions instead"
 	if err.Error() != want {
 		t.Fatalf("refusal must match bd ruling add verbatim\n want %q\n got  %q", want, err.Error())
 	}

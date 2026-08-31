@@ -92,7 +92,7 @@ func newPrimeCmd() *cobra.Command {
 
 			if export {
 				if cfg.BeadDir == "" {
-					return fmt.Errorf("no .bd directory found — run `bd init` first")
+					return config.NoBeadDirError()
 				}
 				if err := os.WriteFile(path, []byte(defaultPrime), 0o644); err != nil {
 					return err
