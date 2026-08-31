@@ -25,7 +25,7 @@ state, not free-form notes.
 - ` + "`bd ready`" + ` — what's available to work on (no open blockers, deferred, ephemeral, or open questions).
 - ` + "`bd show <id>`" + ` — execution contract for the bead (see Reading). Long descriptions print an
   outline; pass ` + "`--full`" + ` for the body or ` + "`--section <slug>`" + ` for one heading.
-- ` + "`bd update <id> --claim`" + ` — assign yourself + set in_progress.
+- ` + "`bd update <id> --status=in_progress --assignee \"<name> / <model>\"`" + ` — claim with attribution (never ` + "`--claim`" + `, which drops the model).
 - ` + "`bd close <id> --reason \"...\"`" + ` — when done.
 
 ## Statements — typed authority (rulings/questions/findings)
