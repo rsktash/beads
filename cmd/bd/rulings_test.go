@@ -128,12 +128,13 @@ func TestRulingsList_VerboseUnchangedFromCurrentFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get r2: %v", err)
 	}
-	// This is the pre-existing human render shape from cmd/bd/rulings.go:
-	// "<id>  <date>  <text>\n" for each ruling on its own issue (no scope
-	// bracket, since it matches the queried issue). Order is the resolver's,
-	// not asserted here.
-	line1 := got1.ID + "  " + got1.CreatedAt.Format("2006-01-02") + "  " + got1.Text
-	line2 := got2.ID + "  " + got2.CreatedAt.Format("2006-01-02") + "  " + got2.Text
+	// Human render shape from cmd/bd/rulings.go: "<id>  <date>  <author>
+	// <text>\n" for each ruling on its own issue (no scope bracket, since it
+	// matches the queried issue). Order is the resolver's, not asserted
+	// here. FiledBy "owner:tester" -> actorWord "owner" (beads-gc6.2 added
+	// the author field to the headline).
+	line1 := got1.ID + "  " + got1.CreatedAt.Format("2006-01-02") + "  owner  " + got1.Text
+	line2 := got2.ID + "  " + got2.CreatedAt.Format("2006-01-02") + "  owner  " + got2.Text
 	if strings.Count(out, "\n") != 2 {
 		t.Fatalf("expected exactly 2 lines, got:\n%q", out)
 	}
@@ -168,7 +169,7 @@ func TestRulingsList_VerboseProjectWideUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	want := got.ID + "  " + got.CreatedAt.Format("2006-01-02") + "  [project]  " + got.Text + "\n"
+	want := got.ID + "  " + got.CreatedAt.Format("2006-01-02") + "  owner  [project]  " + got.Text + "\n"
 	if out != want {
 		t.Fatalf("verbose project-wide render should match the pre-existing format\n want %q\n got  %q", want, out)
 	}

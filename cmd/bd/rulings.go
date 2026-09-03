@@ -96,14 +96,7 @@ func newRulingsCmd() *cobra.Command {
 						fmt.Fprintln(out, terseRulingLine(r))
 						continue
 					}
-					date := r.CreatedAt.Format("2006-01-02")
-					prefix := fmt.Sprintf("%s  %s", r.ID, date)
-					if r.IssueID == nil {
-						prefix += "  [project]"
-					} else if *r.IssueID != issueID {
-						prefix += fmt.Sprintf("  [%s]", *r.IssueID)
-					}
-					fmt.Fprintf(out, "%s  %s\n", prefix, r.Text)
+					fmt.Fprintln(out, rulingHeadline(r, issueID))
 				}
 			} else {
 				for _, r := range rulings {
@@ -111,12 +104,11 @@ func newRulingsCmd() *cobra.Command {
 						fmt.Fprintln(out, terseRulingLine(r))
 						continue
 					}
-					issueStr := "project"
-					if r.IssueID != nil && *r.IssueID != "" {
-						issueStr = *r.IssueID
-					}
-					date := r.CreatedAt.Format("2006-01-02")
-					fmt.Fprintf(out, "%s  %s  [%s]  %s\n", r.ID, date, issueStr, r.Text)
+					// issueID "" never matches a real bead id, so the
+					// origin marker rulingHeadline appends is always
+					// present here, matching the pre-existing project-wide
+					// shape (every row carries its scope).
+					fmt.Fprintln(out, rulingHeadline(r, ""))
 				}
 			}
 			return nil
@@ -136,5 +128,5 @@ func terseRulingLine(r beads.Statement) string {
 	if r.IssueID != nil && *r.IssueID != "" {
 		scope = *r.IssueID
 	}
-	return fmt.Sprintf("%s  [%s]  %s", r.ID, scope, r.Text)
+	return fmt.Sprintf("%s  [%s]  %s", r.ID, scope, headlineText(r.Text))
 }

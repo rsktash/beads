@@ -22,14 +22,16 @@ const outlineDefaultThreshold = 2048
 
 func newShowCmd() *cobra.Command {
 	var (
-		section  string
-		full     bool
-		outline  bool
-		include  []string
-		maxBytes int
-		linesStr string
-		headN    int
-		tailN    int
+		section     string
+		full        bool
+		outline     bool
+		include     []string
+		maxBytes    int
+		linesStr    string
+		headN       int
+		tailN       int
+		rulingsMode string
+		expand      []string
 	)
 	cmd := &cobra.Command{
 		Use:   "show <id> [<id> ...]",
@@ -46,14 +48,19 @@ func newShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if rulingsMode != "headline" && rulingsMode != rulingsModeFull {
+				return fmt.Errorf("invalid --rulings %q (headline|full)", rulingsMode)
+			}
 			opts := showOpts{
-				section:    section,
-				full:       full,
-				outline:    outline,
-				lineSlice:  lineSlice,
-				include:    parseIncludeSet(include),
-				wantJSON:   cc.json,
-				multiCount: len(args),
+				section:     section,
+				full:        full,
+				outline:     outline,
+				lineSlice:   lineSlice,
+				include:     parseIncludeSet(include),
+				wantJSON:    cc.json,
+				multiCount:  len(args),
+				rulingsMode: rulingsMode,
+				expand:      parseExpandSet(expand),
 			}
 
 			out := bufferedWriter(maxBytes)
@@ -117,17 +124,38 @@ func newShowCmd() *cobra.Command {
 	cmd.Flags().StringVar(&linesStr, "lines", "", "slice description by 1-indexed line range: START-END, START-, or -END")
 	cmd.Flags().IntVar(&headN, "head", 0, "show only the first N lines of the description (mutually exclusive with --lines/--tail)")
 	cmd.Flags().IntVar(&tailN, "tail", 0, "show only the last N lines of the description (mutually exclusive with --lines/--head)")
+	cmd.Flags().StringVar(&rulingsMode, "rulings", "headline", "render active rulings as headline (id, date, author, first 120 chars) or full (untruncated text): headline|full")
+	cmd.Flags().StringSliceVar(&expand, "expand", nil, "statement id(s) to print in full below their headline, repeatable")
 	return cmd
 }
 
 type showOpts struct {
-	section    string
-	full       bool
-	outline    bool
-	lineSlice  lineSlice
-	include    includeSet
-	wantJSON   bool
-	multiCount int
+	section     string
+	full        bool
+	outline     bool
+	lineSlice   lineSlice
+	include     includeSet
+	wantJSON    bool
+	multiCount  int
+	rulingsMode string
+	expand      map[string]bool
+}
+
+// parseExpandSet turns the repeatable --expand flag into a lookup set. An id
+// naming a statement outside the rendered ruling set is silently ignored by
+// the caller (the flag is reused by other statement kinds elsewhere).
+func parseExpandSet(ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			set[id] = true
+		}
+	}
+	return set
 }
 
 type includeSet struct {
