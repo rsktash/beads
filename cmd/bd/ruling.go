@@ -19,7 +19,29 @@ func newRulingCmd() *cobra.Command {
 	}
 	root.AddCommand(newRulingAddCmd())
 	root.AddCommand(newRulingRetireCmd())
+	root.AddCommand(newRulingListCmd())
 	return root
+}
+
+// newRulingListCmd is `bd ruling list`, a sibling alias for `bd rulings`
+// (registered separately, not via cobra's Aliases, because the alias sits
+// under a different parent command). Same flags, same runRulings body, so
+// output is byte-identical for the same arguments.
+func newRulingListCmd() *cobra.Command {
+	var scope string
+	var grep string
+	cmd := &cobra.Command{
+		Use:   "list [issue-id]",
+		Short: "List active rulings (alias for `bd rulings`)",
+		Long:  "List active rulings. Without an issue id, lists every active ruling in the project newest first. With an issue id, lists what that bead is bound by via the inheritance resolver (same set the contract shows). Use --scope project to list only project-scoped rulings (issue_id IS NULL). Use --grep <kw> to substring-match across every scope (case-insensitive, over law+text); it cannot be combined with an issue id.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRulings(cmd, args, scope, grep)
+		},
+	}
+	cmd.Flags().StringVar(&scope, "scope", "", "filter scope: project (only project-scoped rulings)")
+	cmd.Flags().StringVar(&grep, "grep", "", "case-insensitive substring match over law+text, across every scope")
+	return cmd
 }
 
 func newRulingAddCmd() *cobra.Command {
