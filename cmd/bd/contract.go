@@ -49,7 +49,16 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 	if len(cv.Rulings) > 0 {
 		fmt.Fprintln(w, "\nACTIVE RULINGS — MUST OBEY")
 		for _, r := range cv.Rulings {
-			fmt.Fprintln(w, formatRulingLine(r, issue.ID))
+			if opts.rulingsMode == rulingsModeFull {
+				fmt.Fprintln(w, "  "+rulingFullLine(r, issue.ID))
+				continue
+			}
+			fmt.Fprintln(w, "  "+rulingHeadline(r, issue.ID))
+			if opts.expand[r.ID] {
+				for _, ln := range strings.Split(r.Text, "\n") {
+					fmt.Fprintln(w, "      "+ln)
+				}
+			}
 		}
 	}
 	if len(cv.Questions) > 0 {
@@ -122,16 +131,57 @@ func formatClosedQuestionLine(q beads.Statement, answerKinds map[string]string) 
 	return line
 }
 
-func formatRulingLine(st beads.Statement, issueID string) string {
+// rulingsModeFull is the `--rulings` flag value that prints untruncated
+// ruling text in place of the headline. Any other value (including the
+// unset default) renders headlines.
+const rulingsModeFull = "full"
+
+// rulingFields builds the shared four-field ruling line — id, date, author,
+// an optional origin marker, then text — used by both the headline and full
+// renderers below. issueID is the bead being rendered so a ruling's own
+// issue never carries a redundant marker; an empty issueID (the
+// project-wide `bd rulings` listing) means every scoped ruling always
+// carries its marker.
+func rulingFields(st beads.Statement, issueID, text string) string {
 	date := st.CreatedAt.Format("2006-01-02")
-	prefix := fmt.Sprintf("  %s  %s", st.ID, date)
-	if st.IssueID == nil {
-		prefix += "  [project]"
-	} else if *st.IssueID != issueID {
-		prefix += fmt.Sprintf("  [%s]", *st.IssueID)
+	author := "unknown"
+	if st.FiledBy != "" {
+		author = actorWord(st.FiledBy)
 	}
-	prefix += fmt.Sprintf("  %s", st.Text)
-	return prefix
+	line := fmt.Sprintf("%s  %s  %s", st.ID, date, author)
+	if st.IssueID == nil {
+		line += "  [project]"
+	} else if *st.IssueID != issueID {
+		line += fmt.Sprintf("  [%s]", *st.IssueID)
+	}
+	line += fmt.Sprintf("  %s", text)
+	return line
+}
+
+// rulingHeadline is the single renderer for a ruling's default, truncated
+// line: id, date, author, optional origin marker, then the first 120 runes
+// of the text. Both `bd show` (with a leading two-space indent added by the
+// caller) and `bd rulings` (without it) go through this.
+func rulingHeadline(st beads.Statement, issueID string) string {
+	return rulingFields(st, issueID, headlineText(st.Text))
+}
+
+// rulingFullLine is rulingHeadline's untruncated counterpart, used under
+// `--rulings full`.
+func rulingFullLine(st beads.Statement, issueID string) string {
+	return rulingFields(st, issueID, st.Text)
+}
+
+// headlineText collapses a statement's text to a single line and truncates
+// it to 120 runes, appending an ellipsis when it truncated.
+func headlineText(s string) string {
+	replaced := strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(s)
+	collapsed := strings.Join(strings.Fields(replaced), " ")
+	runes := []rune(collapsed)
+	if len(runes) > 120 {
+		return string(runes[:120]) + "…"
+	}
+	return collapsed
 }
 
 func renderBaseText(w io.Writer, issue *beads.Issue, opts showOpts) error {
