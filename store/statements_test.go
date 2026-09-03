@@ -36,8 +36,8 @@ func TestMigrationVersion4Applied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus: %v", err)
 	}
-	if len(status) != 4 {
-		t.Fatalf("expected 4 migrations, got %d: %+v", len(status), status)
+	if len(status) != 5 {
+		t.Fatalf("expected 5 migrations, got %d: %+v", len(status), status)
 	}
 	for _, m := range status {
 		if !m.Applied {
@@ -75,8 +75,68 @@ func TestMigrationIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus second: %v", err)
 	}
-	if len(status) != 4 {
-		t.Fatalf("expected 4 after second open, got %d", len(status))
+	if len(status) != 5 {
+		t.Fatalf("expected 5 after second open, got %d", len(status))
+	}
+}
+
+// TestMigration0005_PreservesRowsAndChain asserts the SQLite 0005 rebuild
+// carries both rows and the supersedes_id chain through the rename, and
+// that resolved_statements is queryable again once the DROP VIEW / recreate
+// finding lands (F-17).
+func TestMigration0005_PreservesRowsAndChain(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "test.db")
+	st1, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	_ = st1.SetConfig(ctx, store.CfgIssuePrefix, "bd")
+	r1 := mustCreateStatement(t, st1, &beads.Statement{Kind: "ruling", Text: "original ruling"})
+	r2 := mustCreateStatement(t, st1, &beads.Statement{Kind: "ruling", Text: "superseding ruling", SupersedesID: strPtr(r1.ID)})
+	if err := st1.UpdateStatementStatus(ctx, r1.ID, "superseded"); err != nil {
+		t.Fatalf("supersede r1: %v", err)
+	}
+	if err := st1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Reopen: migrations (including 0005) re-run against the same DSN.
+	st2, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer st2.Close()
+
+	list, err := st2.ListStatements(ctx, store.StatementFilter{})
+	if err != nil {
+		t.Fatalf("list after reopen: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 rows to survive the rebuild, got %d: %+v", len(list), list)
+	}
+
+	got1, err := st2.GetStatement(ctx, r1.ID)
+	if err != nil {
+		t.Fatalf("get r1 after reopen: %v", err)
+	}
+	if got1.Status != "superseded" {
+		t.Fatalf("r1 status should survive as superseded, got %s", got1.Status)
+	}
+
+	got2, err := st2.GetStatement(ctx, r2.ID)
+	if err != nil {
+		t.Fatalf("get r2 after reopen: %v", err)
+	}
+	if got2.SupersedesID == nil || *got2.SupersedesID != r1.ID {
+		t.Fatalf("r2.supersedes_id should still point at %s, got %v", r1.ID, got2.SupersedesID)
+	}
+
+	// resolved_statements must still be queryable post-rebuild.
+	var cnt int
+	if err := st2.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM resolved_statements`).Scan(&cnt); err != nil {
+		t.Fatalf("resolved_statements not queryable after 0005: %v", err)
 	}
 }
 
@@ -484,8 +544,8 @@ func TestPostgresStatements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration status pg: %v", err)
 	}
-	if len(status) != 4 {
-		t.Fatalf("expected 4 migrations pg, got %d", len(status))
+	if len(status) != 5 {
+		t.Fatalf("expected 5 migrations pg, got %d", len(status))
 	}
 	var cnt int
 	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM resolved_statements`).Scan(&cnt); err != nil {
