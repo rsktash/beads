@@ -30,6 +30,7 @@ func newRulingAddCmd() *cobra.Command {
 		deferStr   string
 		closeFlag  bool
 		parkFlag   bool
+		verbatim   string
 	)
 	cmd := &cobra.Command{
 		Use:   "add [<issue-id>] <text>",
@@ -98,12 +99,13 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 
 			// Build statement
 			st := &beads.Statement{
-				Kind:    "ruling",
-				IssueID: issueID,
-				Text:    text,
-				FiledBy: identity,
-				Status:  "active",
-				Scope:   scopeVal,
+				Kind:     "ruling",
+				IssueID:  issueID,
+				Text:     text,
+				FiledBy:  identity,
+				Status:   "active",
+				Scope:    scopeVal,
+				Verbatim: strings.TrimSpace(verbatim),
 			}
 			if f.Changed("supersedes") && supersedes != "" {
 				s := strings.TrimSpace(supersedes)
@@ -169,6 +171,7 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 	cmd.Flags().StringVar(&deferStr, "defer", "", "defer bead until RFC3339 timestamp (atomic with ruling)")
 	cmd.Flags().BoolVar(&closeFlag, "close", false, "close the bead (atomic with ruling)")
 	cmd.Flags().BoolVar(&parkFlag, "park", false, "park the bead (defer far future + label 'parked', atomic with ruling)")
+	cmd.Flags().StringVar(&verbatim, "verbatim", "", "the owner's verbatim sentence backing this ruling (stored untouched, never in the default headline)")
 	return cmd
 }
 

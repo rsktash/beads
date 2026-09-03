@@ -188,6 +188,22 @@ type Statement struct {
 	AnsweredBy      *string   `db:"answered_by" json:"answered_by,omitempty"`
 	SourceCommentID *string   `db:"source_comment_id" json:"source_comment_id,omitempty"`
 	Evidence        string    `db:"evidence" json:"evidence,omitempty"`
+	// Verbatim is the owner's verbatim sentence backing a ruling. It is
+	// stored untouched and never renders in the default headline.
+	Verbatim string `db:"verbatim" json:"verbatim,omitempty"`
+	// Author is the closed-vocabulary rendering of FiledBy (owner, coordinator
+	// or agent) that the search filters on; FiledBy keeps the full identity.
+	Author     string     `db:"author" json:"author,omitempty"`
+	Topic      string     `db:"topic" json:"topic,omitempty"`
+	Workspace  string     `db:"workspace" json:"workspace,omitempty"`
+	Concern    string     `db:"concern" json:"concern,omitempty"`
+	Law        string     `db:"law" json:"law,omitempty"`
+	Rationale  string     `db:"rationale" json:"rationale,omitempty"`
+	SessionID  string     `db:"session_id" json:"session_id,omitempty"`
+	MsgID      string     `db:"msg_id" json:"msg_id,omitempty"`
+	ToolUseID  string     `db:"tool_use_id" json:"tool_use_id,omitempty"`
+	RetireNote string     `db:"retire_note" json:"retire_note,omitempty"`
+	ChangedAt  *time.Time `db:"changed_at" json:"changed_at,omitempty"`
 }
 
 type Comment struct {
