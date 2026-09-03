@@ -295,8 +295,18 @@ func printShowHuman(w io.Writer, cc *cmdCtx, id string, opts showOpts) error {
 	if err != nil {
 		return err
 	}
+	cv, err := cc.store.ContractStatements(cc.ctx, id)
+	if err != nil {
+		return err
+	}
+	cs, err := cc.store.ListComments(cc.ctx, id)
+	if err != nil {
+		return err
+	}
 
-	fmt.Fprintf(w, "CONTRACT %s  [%s] %s p%d %s\n", i.ID, i.Status, i.Type, i.Priority, i.Title)
+	fmt.Fprintf(w, "CONTRACT %s  [%s] %s p%d %s  | rulings %d  questions %d open / %d answered  findings %d  comments %d\n",
+		i.ID, i.Status, i.Type, i.Priority, i.Title,
+		len(cv.Rulings), len(cv.Questions), len(cv.ClosedQuestions), len(cv.Findings), len(cs))
 	if i.Assignee != "" {
 		fmt.Fprintf(w, "assignee: %s\n", i.Assignee)
 	}
@@ -313,15 +323,6 @@ func printShowHuman(w io.Writer, cc *cmdCtx, id string, opts showOpts) error {
 	}
 	if i.ClosedAt != nil {
 		fmt.Fprintf(w, "closed:   %s (%s)\n", i.ClosedAt.Format("2006-01-02 15:04:05"), i.CloseReason)
-	}
-
-	cv, err := cc.store.ContractStatements(cc.ctx, id)
-	if err != nil {
-		return err
-	}
-	cs, err := cc.store.ListComments(cc.ctx, id)
-	if err != nil {
-		return err
 	}
 
 	return renderContractSections(w, i, cv, deps, cs, opts)

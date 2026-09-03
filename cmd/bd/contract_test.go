@@ -134,7 +134,18 @@ func mustNotContain(t *testing.T, s, substr string) {
 
 func mustNotContainCI(t *testing.T, s, substr string) {
 	t.Helper()
-	if strings.Contains(strings.ToLower(s), strings.ToLower(substr)) {
+	// CONTRACT header lines always carry a "comments N" count segment
+	// (feature 2, gc6.3), which is structural, not leaked comment content;
+	// exclude those lines so the guard still catches an actual leak.
+	var kept []string
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.HasPrefix(ln, "CONTRACT ") {
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	body := strings.Join(kept, "\n")
+	if strings.Contains(strings.ToLower(body), strings.ToLower(substr)) {
 		t.Fatalf("unexpected case-insensitive %q in output, got:\n%s", substr, s)
 	}
 }
