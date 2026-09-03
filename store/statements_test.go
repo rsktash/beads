@@ -36,8 +36,8 @@ func TestMigrationVersion4Applied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus: %v", err)
 	}
-	if len(status) != 5 {
-		t.Fatalf("expected 5 migrations, got %d: %+v", len(status), status)
+	if len(status) != 6 {
+		t.Fatalf("expected 6 migrations, got %d: %+v", len(status), status)
 	}
 	for _, m := range status {
 		if !m.Applied {
@@ -75,8 +75,8 @@ func TestMigrationIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus second: %v", err)
 	}
-	if len(status) != 5 {
-		t.Fatalf("expected 5 after second open, got %d", len(status))
+	if len(status) != 6 {
+		t.Fatalf("expected 6 after second open, got %d", len(status))
 	}
 }
 
@@ -544,8 +544,8 @@ func TestPostgresStatements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration status pg: %v", err)
 	}
-	if len(status) != 5 {
-		t.Fatalf("expected 5 migrations pg, got %d", len(status))
+	if len(status) != 6 {
+		t.Fatalf("expected 6 migrations pg, got %d", len(status))
 	}
 	var cnt int
 	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM resolved_statements`).Scan(&cnt); err != nil {
@@ -632,7 +632,7 @@ func TestResolvedStatements_Origin(t *testing.T) {
 		stmtID string
 		kind   string
 		origin sql.NullString
-		depth sql.NullInt64
+		depth  sql.NullInt64
 	}
 	var got []row
 	for rows.Next() {
@@ -917,3 +917,124 @@ func TestResolvedStatements_QuestionFindingNonInheritance(t *testing.T) {
 }
 
 var _ = sql.ErrNoRows
+
+// TestResolved_BlocksInheritance asserts a ruling on a bead that blocks a
+// second bead reaches that second bead's contract, carrying its blocker's id
+// as origin (never the target bead's own id).
+func TestResolved_BlocksInheritance(t *testing.T) {
+	ctx := context.Background()
+	st := newSqliteStoreWithPrefix(t, "blocksinherit")
+	a := mkIssue(t, st, "blocker A", 1)
+	b := mkIssue(t, st, "blocked B", 1)
+	if err := st.AddDependency(ctx, beads.Dependency{IssueID: b.ID, DependsOnID: a.ID, Type: beads.DepBlocks}); err != nil {
+		t.Fatalf("A blocks B: %v", err)
+	}
+	ruling := mustCreateStatement(t, st, &beads.Statement{Kind: "ruling", Text: "ruling on A", IssueID: strPtr(a.ID)})
+
+	cv, err := st.ContractStatements(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("contract B: %v", err)
+	}
+	var found *beads.Statement
+	for i := range cv.Rulings {
+		if cv.Rulings[i].ID == ruling.ID {
+			found = &cv.Rulings[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected B's contract to hold ruling from blocker A, got %+v", cv.Rulings)
+	}
+	if found.IssueID == nil || *found.IssueID != a.ID {
+		t.Fatalf("origin should be blocker A (%s), got %v", a.ID, found.IssueID)
+	}
+	if found.IssueID != nil && *found.IssueID == b.ID {
+		t.Fatalf("origin must not be the target bead B itself")
+	}
+}
+
+// TestResolved_BlocksOneHopOnly asserts the blocks arm is not transitive: A
+// blocks B blocks C, a ruling on A does not reach C.
+func TestResolved_BlocksOneHopOnly(t *testing.T) {
+	ctx := context.Background()
+	st := newSqliteStoreWithPrefix(t, "blocksonehop")
+	a := mkIssue(t, st, "A", 1)
+	b := mkIssue(t, st, "B", 1)
+	c := mkIssue(t, st, "C", 1)
+	if err := st.AddDependency(ctx, beads.Dependency{IssueID: b.ID, DependsOnID: a.ID, Type: beads.DepBlocks}); err != nil {
+		t.Fatalf("A blocks B: %v", err)
+	}
+	if err := st.AddDependency(ctx, beads.Dependency{IssueID: c.ID, DependsOnID: b.ID, Type: beads.DepBlocks}); err != nil {
+		t.Fatalf("B blocks C: %v", err)
+	}
+	ruling := mustCreateStatement(t, st, &beads.Statement{Kind: "ruling", Text: "ruling on A one hop", IssueID: strPtr(a.ID)})
+
+	cvB, err := st.ContractStatements(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("contract B: %v", err)
+	}
+	foundB := false
+	for _, r := range cvB.Rulings {
+		if r.ID == ruling.ID {
+			foundB = true
+		}
+	}
+	if !foundB {
+		t.Fatalf("B (one hop from A) should hold the ruling")
+	}
+
+	cvC, err := st.ContractStatements(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("contract C: %v", err)
+	}
+	for _, r := range cvC.Rulings {
+		if r.ID == ruling.ID {
+			t.Fatalf("C (two hops from A) should not hold the ruling, blocks is one hop only")
+		}
+	}
+}
+
+// TestResolved_BlocksSkipsQuestions asserts only rulings cross a blocks edge —
+// a question filed on the blocker never reaches the blocked bead.
+func TestResolved_BlocksSkipsQuestions(t *testing.T) {
+	ctx := context.Background()
+	st := newSqliteStoreWithPrefix(t, "blocksskipsq")
+	a := mkIssue(t, st, "A", 1)
+	b := mkIssue(t, st, "B", 1)
+	if err := st.AddDependency(ctx, beads.Dependency{IssueID: b.ID, DependsOnID: a.ID, Type: beads.DepBlocks}); err != nil {
+		t.Fatalf("A blocks B: %v", err)
+	}
+	q := mustCreateStatement(t, st, &beads.Statement{Kind: "question", Text: "question on A", IssueID: strPtr(a.ID)})
+
+	cv, err := st.ContractStatements(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("contract B: %v", err)
+	}
+	for _, qq := range cv.Questions {
+		if qq.ID == q.ID {
+			t.Fatalf("question on blocker A should not reach blocked B")
+		}
+	}
+}
+
+// TestResolved_BlocksRespectsScopeSelf asserts scope=self on the blocks arm
+// mirrors the epic arm: a self-scoped ruling on the blocker stops there.
+func TestResolved_BlocksRespectsScopeSelf(t *testing.T) {
+	ctx := context.Background()
+	st := newSqliteStoreWithPrefix(t, "blocksself")
+	a := mkIssue(t, st, "A", 1)
+	b := mkIssue(t, st, "B", 1)
+	if err := st.AddDependency(ctx, beads.Dependency{IssueID: b.ID, DependsOnID: a.ID, Type: beads.DepBlocks}); err != nil {
+		t.Fatalf("A blocks B: %v", err)
+	}
+	ruling := mustCreateStatement(t, st, &beads.Statement{Kind: "ruling", Text: "self scoped ruling on A", IssueID: strPtr(a.ID), Scope: "self"})
+
+	cv, err := st.ContractStatements(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("contract B: %v", err)
+	}
+	for _, r := range cv.Rulings {
+		if r.ID == ruling.ID {
+			t.Fatalf("scope=self ruling on blocker A should not reach blocked B")
+		}
+	}
+}

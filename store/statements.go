@@ -104,10 +104,10 @@ func authorFromFiledBy(filedBy string) string {
 // statementSelectColumns is the shared column list for statements reads
 // (GetStatement, ListStatements), kept in lockstep with scanStatementRow and
 // scanStatementRows below.
-const statementSelectColumns = `id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at`
+const statementSelectColumns = `id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id`
 
 // insertStatementSQL is the column list for statements inserts.
-const insertStatementSQL = `INSERT INTO statements (id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const insertStatementSQL = `INSERT INTO statements (id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func insertStatementExec(ctx context.Context, execer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -138,6 +138,7 @@ func insertStatementExec(ctx context.Context, execer interface {
 		st.ToolUseID,
 		st.RetireNote,
 		nullTimePtr(st.ChangedAt),
+		nullStrPtr(st.BindsID),
 	)
 	return err
 }
@@ -785,7 +786,7 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 		FROM resolved_statements rs
 		JOIN statements stmt ON stmt.id = rs.statement_id
 		WHERE rs.issue_id = ?
-		ORDER BY CASE WHEN rs.origin_kind = 'project' THEN 1 ELSE 0 END, COALESCE(rs.depth, 999), rs.created_at DESC, rs.statement_id DESC`)
+		ORDER BY CASE rs.origin_kind WHEN 'self' THEN 0 WHEN 'binds' THEN 1 WHEN 'epic' THEN 2 WHEN 'blocks' THEN 3 ELSE 4 END, COALESCE(rs.depth, 999), rs.created_at DESC, rs.statement_id DESC`)
 	rows, err := s.db.QueryContext(ctx, q, issueID)
 	if err != nil {
 		return ContractView{}, err
@@ -793,6 +794,10 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 	defer rows.Close()
 
 	var rulings, questions, findings []beads.Statement
+	// seen dedupes a statement reachable by two arms (e.g. bound explicitly
+	// and also inherited through the epic chain), keeping the first row —
+	// the ORDER BY above has already put the nearest origin first.
+	seen := map[string]bool{}
 	for rows.Next() {
 		var statementID, kind, text, filedBy, evidence, originKind, verbatim string
 		var createdAt time.Time
@@ -801,6 +806,10 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 		if err := rows.Scan(&statementID, &kind, &text, &createdAt, &filedBy, &evidence, &originKind, &originIssueID, &depth, &verbatim); err != nil {
 			return ContractView{}, err
 		}
+		if seen[statementID] {
+			continue
+		}
+		seen[statementID] = true
 		st := beads.Statement{
 			ID:        statementID,
 			Kind:      kind,
@@ -813,8 +822,8 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 			Verbatim:  verbatim,
 		}
 		// Map view's origin to Statement.IssueID so existing renderer keeps its
-		// bracket logic: self -> own id (no bracket), epic -> ancestor id,
-		// project -> nil ([project]).
+		// bracket logic: self -> own id (no bracket), epic/blocks/binds ->
+		// origin bead, project -> nil ([project]).
 		switch originKind {
 		case "project":
 			st.IssueID = nil
@@ -822,6 +831,16 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 			v := issueID
 			st.IssueID = &v
 		case "epic":
+			if originIssueID.Valid {
+				v := originIssueID.String
+				st.IssueID = &v
+			}
+		case "blocks":
+			if originIssueID.Valid {
+				v := originIssueID.String
+				st.IssueID = &v
+			}
+		case "binds":
 			if originIssueID.Valid {
 				v := originIssueID.String
 				st.IssueID = &v
@@ -881,11 +900,11 @@ func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
 		topic, workspace, concern, law, rationale, verbatim, author string
 		sessionID, msgID, toolUseID, retireNote                     string
 		createdAt                                                   time.Time
-		nsIssue, nsSupersedes, nsAnswered, nsSource                 sql.NullString
+		nsIssue, nsSupersedes, nsAnswered, nsSource, nsBinds        sql.NullString
 		ntChanged                                                   sql.NullTime
 	)
 	if err := row.Scan(&id, &kind, &nsIssue, &text, &createdAt, &filedBy, &status, &scope, &nsSupersedes, &nsAnswered, &nsSource, &evidence,
-		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged); err != nil {
+		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds); err != nil {
 		return nil, err
 	}
 	return &beads.Statement{
@@ -913,6 +932,7 @@ func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
 		ToolUseID:       toolUseID,
 		RetireNote:      retireNote,
 		ChangedAt:       nullTimeToPtr(ntChanged),
+		BindsID:         nullStringToPtr(nsBinds),
 	}, nil
 }
 
@@ -922,11 +942,11 @@ func scanStatementRows(rows *sql.Rows) (*beads.Statement, error) {
 		topic, workspace, concern, law, rationale, verbatim, author string
 		sessionID, msgID, toolUseID, retireNote                     string
 		createdAt                                                   time.Time
-		nsIssue, nsSupersedes, nsAnswered, nsSource                 sql.NullString
+		nsIssue, nsSupersedes, nsAnswered, nsSource, nsBinds        sql.NullString
 		ntChanged                                                   sql.NullTime
 	)
 	if err := rows.Scan(&id, &kind, &nsIssue, &text, &createdAt, &filedBy, &status, &scope, &nsSupersedes, &nsAnswered, &nsSource, &evidence,
-		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged); err != nil {
+		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds); err != nil {
 		return nil, err
 	}
 	return &beads.Statement{
@@ -954,6 +974,7 @@ func scanStatementRows(rows *sql.Rows) (*beads.Statement, error) {
 		ToolUseID:       toolUseID,
 		RetireNote:      retireNote,
 		ChangedAt:       nullTimeToPtr(ntChanged),
+		BindsID:         nullStringToPtr(nsBinds),
 	}, nil
 }
 

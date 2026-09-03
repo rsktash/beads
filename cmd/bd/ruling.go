@@ -31,6 +31,7 @@ func newRulingAddCmd() *cobra.Command {
 		closeFlag  bool
 		parkFlag   bool
 		verbatim   string
+		binds      string
 	)
 	cmd := &cobra.Command{
 		Use:   "add [<issue-id>] <text>",
@@ -111,6 +112,16 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 				s := strings.TrimSpace(supersedes)
 				st.SupersedesID = &s
 			}
+			if f.Changed("binds") && binds != "" {
+				if issueID == nil {
+					return fmt.Errorf("--binds is redundant on a project-scoped ruling")
+				}
+				b := strings.TrimSpace(binds)
+				if b == *issueID {
+					return fmt.Errorf("--binds names the bead the ruling is already on")
+				}
+				st.BindsID = &b
+			}
 			// answers is handled via store transaction param, not via st.AnsweredBy directly,
 			// but we also support st.AnsweredBy path for the two-param store API.
 			answersID := ""
@@ -172,6 +183,7 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 	cmd.Flags().BoolVar(&closeFlag, "close", false, "close the bead (atomic with ruling)")
 	cmd.Flags().BoolVar(&parkFlag, "park", false, "park the bead (defer far future + label 'parked', atomic with ruling)")
 	cmd.Flags().StringVar(&verbatim, "verbatim", "", "the owner's verbatim sentence backing this ruling (stored untouched, never in the default headline)")
+	cmd.Flags().StringVar(&binds, "binds", "", "attach this ruling explicitly to a second bead (issue-scoped rulings only)")
 	return cmd
 }
 

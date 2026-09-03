@@ -188,6 +188,9 @@ type Statement struct {
 	AnsweredBy      *string   `db:"answered_by" json:"answered_by,omitempty"`
 	SourceCommentID *string   `db:"source_comment_id" json:"source_comment_id,omitempty"`
 	Evidence        string    `db:"evidence" json:"evidence,omitempty"`
+	// BindsID names a second bead this ruling is explicitly attached to
+	// (bd ruling add --binds), in addition to the bead it is filed on.
+	BindsID *string `db:"binds_id" json:"binds_id,omitempty"`
 	// Verbatim is the owner's verbatim sentence backing a ruling. It is
 	// stored untouched and never renders in the default headline.
 	Verbatim string `db:"verbatim" json:"verbatim,omitempty"`
