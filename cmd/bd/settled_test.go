@@ -65,7 +65,7 @@ func mustCreateSettledStatement(t *testing.T, st *store.Store, s *beads.Statemen
 	return s
 }
 
-func runRulings(t *testing.T, args []string) (string, string, error) {
+func runRulingsForSettled(t *testing.T, args []string) (string, string, error) {
 	t.Helper()
 	root := newRulingsCmd()
 	bufOut := &bytes.Buffer{}
@@ -121,7 +121,7 @@ func TestRulings_ListsEveryActiveNewestFirst(t *testing.T) {
 	_ = st.UpdateStatementStatus(context.Background(), rRet.ID, "retracted")
 	_ = st.Close()
 
-	out, _, err := runRulings(t, []string{})
+	out, _, err := runRulingsForSettled(t, []string{})
 	if err != nil {
 		t.Fatalf("rulings: %v out %q", err, out)
 	}
@@ -186,7 +186,7 @@ func TestRulings_ScopeProject(t *testing.T) {
 		mustCreateSettledStatement(t, st, &beads.Statement{Kind: "ruling", Text: "bead ruling", IssueID: &iss.ID})
 	}
 	_ = st.Close()
-	out, _, err := runRulings(t, []string{"--scope", "project"})
+	out, _, err := runRulingsForSettled(t, []string{"--scope", "project"})
 	if err != nil {
 		t.Fatalf("rulings --scope project: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestRulings_ScopeProject(t *testing.T) {
 	old := flagJSON
 	flagJSON = true
 	t.Cleanup(func() { flagJSON = old })
-	outJSON, _, err := runRulings(t, []string{"--scope", "project"})
+	outJSON, _, err := runRulingsForSettled(t, []string{"--scope", "project"})
 	if err != nil {
 		t.Fatalf("json project: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestRulings_IssueBoundMatchesContract(t *testing.T) {
 		}
 	}
 	_ = st.Close()
-	out, _, err := runRulings(t, []string{task.ID})
+	out, _, err := runRulingsForSettled(t, []string{task.ID})
 	if err != nil {
 		t.Fatalf("rulings <issue>: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestRulings_JSONEmptyAndArray(t *testing.T) {
 	old := flagJSON
 	flagJSON = true
 	t.Cleanup(func() { flagJSON = old })
-	out, _, err := runRulings(t, []string{})
+	out, _, err := runRulingsForSettled(t, []string{})
 	if err != nil {
 		t.Fatalf("rulings --json empty: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestRulings_JSONEmptyAndArray(t *testing.T) {
 	mustCreateSettledStatement(t, st2, &beads.Statement{Kind: "ruling", Text: "one ruling", IssueID: &iss.ID})
 	_ = st2.Close()
 	flagJSON = true
-	out2, _, err := runRulings(t, []string{})
+	out2, _, err := runRulingsForSettled(t, []string{})
 	if err != nil {
 		t.Fatalf("rulings json with data: %v", err)
 	}
