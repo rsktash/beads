@@ -17,6 +17,7 @@ func newRulingCmd() *cobra.Command {
 		Short: "Manage rulings (typed authority records)",
 	}
 	root.AddCommand(newRulingAddCmd())
+	root.AddCommand(newRulingRetireCmd())
 	return root
 }
 

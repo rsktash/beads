@@ -403,6 +403,23 @@ func (s *Store) UpdateStatementStatus(ctx context.Context, id string, status str
 	return nil
 }
 
+// RetireRuling flips a ruling to retired in place, storing the note and the
+// change timestamp. It never inserts a row. Returns ErrNotFound when the
+// target isn't a ruling still open to retirement (already retired or
+// superseded, or missing).
+func (s *Store) RetireRuling(ctx context.Context, id string, note string) error {
+	q := s.rebind(`UPDATE statements SET status = 'retired', retire_note = ?, changed_at = ? WHERE id = ? AND kind = 'ruling' AND status NOT IN ('retired','superseded')`)
+	res, err := s.db.ExecContext(ctx, q, note, time.Now().UTC(), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetAnsweredBy links a question to the statement that answered it and marks it
 // answered. The target may be a ruling or a finding; answered_by carries no kind
 // constraint, and the caller enforces which kinds it accepts.
