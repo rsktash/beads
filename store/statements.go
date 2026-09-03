@@ -144,7 +144,10 @@ func insertStatementExec(ctx context.Context, execer interface {
 
 // CreateStatement allocates an ID from the per-kind counter inside the same
 // transaction as the insert when ID is empty, and sets CreatedAt when zero.
-// If either step fails, neither the counter nor the row is persisted.
+// If either step fails, neither the counter nor the row is persisted. This is
+// the write path for standalone findings and questions (bd finding add, bd
+// question add): filing one stamps changed_at and, unless the statement is
+// project-scoped, bumps the bound bead in the same transaction.
 func (s *Store) CreateStatement(ctx context.Context, st *beads.Statement) error {
 	if st.Kind == "" {
 		return fmt.Errorf("kind is required")
@@ -161,13 +164,11 @@ func (s *Store) CreateStatement(ctx context.Context, st *beads.Statement) error 
 	if st.Scope == "" {
 		st.Scope = "inherit"
 	}
+	at := time.Now().UTC()
 	if st.CreatedAt.IsZero() {
-		st.CreatedAt = time.Now().UTC()
+		st.CreatedAt = at
 	}
-
-	if st.ID != "" {
-		return insertStatementExec(ctx, s.db, s, st)
-	}
+	st.ChangedAt = &at
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -180,18 +181,27 @@ func (s *Store) CreateStatement(ctx context.Context, st *beads.Statement) error 
 		}
 	}()
 
-	// Allocate per-kind counter inside the transaction.
-	q := s.rebind(`INSERT INTO statement_counters (kind, last_id) VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET last_id = statement_counters.last_id + 1 RETURNING last_id`)
-	var n int64
-	if err := tx.QueryRowContext(ctx, q, st.Kind).Scan(&n); err != nil {
-		return err
+	if st.ID == "" {
+		// Allocate per-kind counter inside the transaction.
+		q := s.rebind(`INSERT INTO statement_counters (kind, last_id) VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET last_id = statement_counters.last_id + 1 RETURNING last_id`)
+		var n int64
+		if err := tx.QueryRowContext(ctx, q, st.Kind).Scan(&n); err != nil {
+			return err
+		}
+		prefix := kindPrefix(st.Kind)
+		st.ID = fmt.Sprintf("%s-%d", prefix, n)
 	}
-	prefix := kindPrefix(st.Kind)
-	st.ID = fmt.Sprintf("%s-%d", prefix, n)
 
 	if err := insertStatementExec(ctx, tx, s, st); err != nil {
 		return err
 	}
+
+	if st.IssueID != nil && *st.IssueID != "" {
+		if err := touchIssueTx(ctx, tx, s, *st.IssueID, at); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -246,9 +256,11 @@ func (s *Store) createStatementTx(ctx context.Context, st *beads.Statement, upd 
 	if st.Scope == "" {
 		st.Scope = "inherit"
 	}
+	at := time.Now().UTC()
 	if st.CreatedAt.IsZero() {
-		st.CreatedAt = time.Now().UTC()
+		st.CreatedAt = at
 	}
+	st.ChangedAt = &at
 	// Handle answer via st.AnsweredBy misuse for the two-param case:
 	// if answersID is nil and st.Kind is ruling and AnsweredBy is set, treat it as question id to answer.
 	if answersID == nil && st.Kind == "ruling" && st.AnsweredBy != nil && *st.AnsweredBy != "" {
@@ -284,29 +296,54 @@ func (s *Store) createStatementTx(ctx context.Context, st *beads.Statement, upd 
 		return err
 	}
 
-	// Supersede link: flip old ruling to superseded.
-	if st.SupersedesID != nil && *st.SupersedesID != "" {
-		q := s.rebind(`UPDATE statements SET status = 'superseded' WHERE id = ?`)
-		res, err := tx.ExecContext(ctx, q, *st.SupersedesID)
-		if err != nil {
+	// The filed statement's own bead is touched, unless it is project-scoped
+	// (issue_id IS NULL): rule 4 says only changed_at is set for those.
+	if st.IssueID != nil && *st.IssueID != "" {
+		if err := touchIssueTx(ctx, tx, s, *st.IssueID, at); err != nil {
 			return err
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return fmt.Errorf("superseded statement %s not found: %w", *st.SupersedesID, ErrNotFound)
 		}
 	}
 
-	// Answer link: set question's answered_by and status.
-	if answersID != nil && *answersID != "" {
-		q := s.rebind(`UPDATE statements SET answered_by = ?, status = 'answered' WHERE id = ?`)
-		res, err := tx.ExecContext(ctx, q, st.ID, *answersID)
+	// Supersede link: flip old ruling to superseded, stamping its own
+	// changed_at, and bump its bead too — a supersede can cross beads.
+	if st.SupersedesID != nil && *st.SupersedesID != "" {
+		supersededIssue, err := statementIssueIDTx(ctx, tx, s, *st.SupersedesID)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("superseded statement %s not found: %w", *st.SupersedesID, ErrNotFound)
+			}
 			return err
 		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return fmt.Errorf("question %s not found: %w", *answersID, ErrNotFound)
+		q := s.rebind(`UPDATE statements SET status = 'superseded', changed_at = ? WHERE id = ?`)
+		if _, err := tx.ExecContext(ctx, q, at, *st.SupersedesID); err != nil {
+			return err
+		}
+		if supersededIssue.Valid && supersededIssue.String != "" {
+			if err := touchIssueTx(ctx, tx, s, supersededIssue.String, at); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Answer link: set question's answered_by and status, stamping its own
+	// changed_at, and bump its bead — the new statement's own bead was
+	// already touched above.
+	if answersID != nil && *answersID != "" {
+		answeredIssue, err := statementIssueIDTx(ctx, tx, s, *answersID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("question %s not found: %w", *answersID, ErrNotFound)
+			}
+			return err
+		}
+		q := s.rebind(`UPDATE statements SET answered_by = ?, status = 'answered', changed_at = ? WHERE id = ?`)
+		if _, err := tx.ExecContext(ctx, q, st.ID, at, *answersID); err != nil {
+			return err
+		}
+		if answeredIssue.Valid && answeredIssue.String != "" {
+			if err := touchIssueTx(ctx, tx, s, answeredIssue.String, at); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -315,7 +352,7 @@ func (s *Store) createStatementTx(ctx context.Context, st *beads.Statement, upd 
 		if st.IssueID == nil || *st.IssueID == "" {
 			return fmt.Errorf("state change requires issue_id")
 		}
-		if err := applyIssueUpdateTx(ctx, tx, s, *st.IssueID, *upd); err != nil {
+		if err := applyIssueUpdateTx(ctx, tx, s, *st.IssueID, *upd, at); err != nil {
 			return err
 		}
 		// Parked label (and any future AddLabels) must land in the same tx.
@@ -337,7 +374,7 @@ func (s *Store) createStatementTx(ctx context.Context, st *beads.Statement, upd 
 	return nil
 }
 
-func applyIssueUpdateTx(ctx context.Context, tx *sql.Tx, s *Store, issueID string, u IssueUpdate) error {
+func applyIssueUpdateTx(ctx context.Context, tx *sql.Tx, s *Store, issueID string, u IssueUpdate, at time.Time) error {
 	var sets []string
 	var args []any
 	add := func(col string, v any) { sets = append(sets, col+"=?"); args = append(args, v) }
@@ -410,7 +447,7 @@ func applyIssueUpdateTx(ctx context.Context, tx *sql.Tx, s *Store, issueID strin
 		// Only labels to add — no row update needed; caller will insert labels.
 		return nil
 	}
-	add("updated_at", time.Now().UTC())
+	add("updated_at", at)
 	args = append(args, issueID)
 	q := s.rebind("UPDATE issues SET " + strings.Join(sets, ", ") + " WHERE id=?")
 	res, err := tx.ExecContext(ctx, q, args...)
@@ -437,10 +474,41 @@ func (s *Store) GetStatement(ctx context.Context, id string) (*beads.Statement, 
 	return st, nil
 }
 
-// UpdateStatementStatus sets status; returns ErrNotFound when no row changed.
+// touchIssueTx bumps the bead's updated_at to at, inside tx. Every statement
+// or comment write path that changes a record bound to a bead calls this, so
+// the UPDATE is never written out a second time.
+func touchIssueTx(ctx context.Context, tx *sql.Tx, s *Store, issueID string, at time.Time) error {
+	q := s.rebind(`UPDATE issues SET updated_at = ? WHERE id = ?`)
+	_, err := tx.ExecContext(ctx, q, at, issueID)
+	return err
+}
+
+// statementIssueIDTx reads the issue_id of a statement inside tx, for the
+// write paths below that need to bump a bead the id column alone doesn't name.
+func statementIssueIDTx(ctx context.Context, tx *sql.Tx, s *Store, id string) (sql.NullString, error) {
+	var issueID sql.NullString
+	q := s.rebind(`SELECT issue_id FROM statements WHERE id = ?`)
+	err := tx.QueryRowContext(ctx, q, id).Scan(&issueID)
+	return issueID, err
+}
+
+// UpdateStatementStatus sets status and changed_at, and bumps the statement's
+// bead; returns ErrNotFound when no row changed.
 func (s *Store) UpdateStatementStatus(ctx context.Context, id string, status string) error {
-	q := s.rebind(`UPDATE statements SET status = ? WHERE id = ?`)
-	res, err := s.db.ExecContext(ctx, q, status, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	at := time.Now().UTC()
+	q := s.rebind(`UPDATE statements SET status = ?, changed_at = ? WHERE id = ?`)
+	res, err := tx.ExecContext(ctx, q, status, at, id)
 	if err != nil {
 		return err
 	}
@@ -448,16 +516,43 @@ func (s *Store) UpdateStatementStatus(ctx context.Context, id string, status str
 	if n == 0 {
 		return ErrNotFound
 	}
+
+	issueID, err := statementIssueIDTx(ctx, tx, s, id)
+	if err != nil {
+		return err
+	}
+	if issueID.Valid && issueID.String != "" {
+		if err := touchIssueTx(ctx, tx, s, issueID.String, at); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
 // RetireRuling flips a ruling to retired in place, storing the note and the
-// change timestamp. It never inserts a row. Returns ErrNotFound when the
-// target isn't a ruling still open to retirement (already retired or
-// superseded, or missing).
+// change timestamp, and bumps its bead. It never inserts a row. Returns
+// ErrNotFound when the target isn't a ruling still open to retirement
+// (already retired or superseded, or missing).
 func (s *Store) RetireRuling(ctx context.Context, id string, note string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	at := time.Now().UTC()
 	q := s.rebind(`UPDATE statements SET status = 'retired', retire_note = ?, changed_at = ? WHERE id = ? AND kind = 'ruling' AND status NOT IN ('retired','superseded')`)
-	res, err := s.db.ExecContext(ctx, q, note, time.Now().UTC(), id)
+	res, err := tx.ExecContext(ctx, q, note, at, id)
 	if err != nil {
 		return err
 	}
@@ -465,15 +560,44 @@ func (s *Store) RetireRuling(ctx context.Context, id string, note string) error 
 	if n == 0 {
 		return ErrNotFound
 	}
+
+	issueID, err := statementIssueIDTx(ctx, tx, s, id)
+	if err != nil {
+		return err
+	}
+	if issueID.Valid && issueID.String != "" {
+		if err := touchIssueTx(ctx, tx, s, issueID.String, at); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
 // SetAnsweredBy links a question to the statement that answered it and marks it
 // answered. The target may be a ruling or a finding; answered_by carries no kind
-// constraint, and the caller enforces which kinds it accepts.
+// constraint, and the caller enforces which kinds it accepts. It stamps the
+// question's changed_at, and bumps both the question's bead and the
+// answering statement's bead.
 func (s *Store) SetAnsweredBy(ctx context.Context, questionID, answerID string) error {
-	q := s.rebind(`UPDATE statements SET answered_by = ?, status = 'answered' WHERE id = ?`)
-	res, err := s.db.ExecContext(ctx, q, strPtrToNullString(answerID), questionID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	at := time.Now().UTC()
+	q := s.rebind(`UPDATE statements SET answered_by = ?, status = 'answered', changed_at = ? WHERE id = ?`)
+	res, err := tx.ExecContext(ctx, q, strPtrToNullString(answerID), at, questionID)
 	if err != nil {
 		return err
 	}
@@ -481,6 +605,23 @@ func (s *Store) SetAnsweredBy(ctx context.Context, questionID, answerID string) 
 	if n == 0 {
 		return ErrNotFound
 	}
+
+	for _, id := range []string{questionID, answerID} {
+		issueID, err := statementIssueIDTx(ctx, tx, s, id)
+		if err != nil {
+			return err
+		}
+		if issueID.Valid && issueID.String != "" {
+			if err := touchIssueTx(ctx, tx, s, issueID.String, at); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
@@ -492,9 +633,22 @@ var ClosedQuestionStatuses = []string{"superseded", "answered", "retracted"}
 // stores the reason and note in evidence, and links the surviving or replacing
 // question through answered_by when one was named. The UPDATE is guarded on the
 // row still being an active question, so a concurrent close cannot double-apply.
+// It stamps changed_at and bumps the question's bead.
 func (s *Store) CloseQuestion(ctx context.Context, questionID, status, evidence, ofID string) error {
-	q := s.rebind(`UPDATE statements SET status = ?, evidence = ?, answered_by = ? WHERE id = ? AND kind = 'question' AND status = 'active'`)
-	res, err := s.db.ExecContext(ctx, q, status, evidence, strPtrToNullString(ofID), questionID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	at := time.Now().UTC()
+	q := s.rebind(`UPDATE statements SET status = ?, evidence = ?, answered_by = ?, changed_at = ? WHERE id = ? AND kind = 'question' AND status = 'active'`)
+	res, err := tx.ExecContext(ctx, q, status, evidence, strPtrToNullString(ofID), at, questionID)
 	if err != nil {
 		return err
 	}
@@ -502,6 +656,21 @@ func (s *Store) CloseQuestion(ctx context.Context, questionID, status, evidence,
 	if n == 0 {
 		return ErrNotFound
 	}
+
+	issueID, err := statementIssueIDTx(ctx, tx, s, questionID)
+	if err != nil {
+		return err
+	}
+	if issueID.Valid && issueID.String != "" {
+		if err := touchIssueTx(ctx, tx, s, issueID.String, at); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 

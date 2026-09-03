@@ -1294,6 +1294,8 @@ func (s *Store) ListLabels(ctx context.Context, issueID string) ([]string, error
 
 // ---------- comments ----------
 
+// AddComment inserts a comment and bumps the bound bead's updated_at in the
+// same transaction (feature 9's rule 8: a comment on a bead bumps that bead).
 func (s *Store) AddComment(ctx context.Context, c *beads.Comment) error {
 	if c.ID == "" {
 		c.ID = uuid.NewString()
@@ -1301,17 +1303,52 @@ func (s *Store) AddComment(ctx context.Context, c *beads.Comment) error {
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = time.Now().UTC()
 	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// A tx-scoped view of the store: every Store method dispatches through
+	// s.sqlite / s.pg, so swapping just that field runs the insert inside
+	// the transaction without rewriting its sqlc call.
+	ts := *s
 	switch s.driver {
 	case DriverSQLite:
-		return s.sqlite.AddComment(ctx, sqlitedb.AddCommentParams{
+		ts.sqlite = s.sqlite.WithTx(tx)
+		if err := ts.sqlite.AddComment(ctx, sqlitedb.AddCommentParams{
 			ID: c.ID, IssueID: c.IssueID, Author: c.Author, Text: c.Text, CreatedAt: c.CreatedAt,
-		})
+		}); err != nil {
+			return err
+		}
 	case DriverPostgres:
-		return s.pg.AddComment(ctx, pgdb.AddCommentParams{
+		ts.pg = s.pg.WithTx(tx)
+		if err := ts.pg.AddComment(ctx, pgdb.AddCommentParams{
 			ID: c.ID, IssueID: c.IssueID, Author: c.Author, Text: c.Text, CreatedAt: c.CreatedAt,
-		})
+		}); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown driver")
 	}
-	return fmt.Errorf("unknown driver")
+
+	if c.IssueID != "" {
+		if err := touchIssueTx(ctx, tx, s, c.IssueID, c.CreatedAt); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (s *Store) ListComments(ctx context.Context, issueID string) ([]beads.Comment, error) {
