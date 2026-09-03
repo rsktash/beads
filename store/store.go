@@ -42,15 +42,15 @@ const (
 
 // Config keys recognised in the in-DB `config` table.
 const (
-	CfgIssuePrefix       = "issue_prefix"
-	CfgIssueIDMode       = "issue_id_mode" // "hash" (default) or "counter"
-	CfgStatusCustom      = "status.custom" // JSON array of extra status names
-	CfgTypesCustom       = "types.custom"  // JSON array of extra issue types
-	CfgMaxCollisionProb  = "max_collision_prob"
-	CfgMinHashLength     = "min_hash_length"
-	CfgMaxHashLength     = "max_hash_length"
-	IDModeHash           = "hash"
-	IDModeCounter        = "counter"
+	CfgIssuePrefix      = "issue_prefix"
+	CfgIssueIDMode      = "issue_id_mode" // "hash" (default) or "counter"
+	CfgStatusCustom     = "status.custom" // JSON array of extra status names
+	CfgTypesCustom      = "types.custom"  // JSON array of extra issue types
+	CfgMaxCollisionProb = "max_collision_prob"
+	CfgMinHashLength    = "min_hash_length"
+	CfgMaxHashLength    = "max_hash_length"
+	IDModeHash          = "hash"
+	IDModeCounter       = "counter"
 )
 
 var (
@@ -695,7 +695,7 @@ func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
 			IsTemplate: boolToInt64(i.IsTemplate),
 			WispType:   i.WispType, MolType: i.MolType, RoleType: i.RoleType,
 			EventKind: i.EventKind, Actor: i.Actor, Target: i.Target, Payload: i.Payload,
-			DueAt:     nullTime(i.DueAt), DeferUntil: nullTime(i.DeferUntil),
+			DueAt: nullTime(i.DueAt), DeferUntil: nullTime(i.DeferUntil),
 		})
 	case DriverPostgres:
 		return s.pg.CreateIssue(ctx, pgdb.CreateIssueParams{
@@ -716,7 +716,7 @@ func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
 			IsTemplate: boolToInt32(i.IsTemplate),
 			WispType:   i.WispType, MolType: i.MolType, RoleType: i.RoleType,
 			EventKind: i.EventKind, Actor: i.Actor, Target: i.Target, Payload: i.Payload,
-			DueAt:     nullTime(i.DueAt), DeferUntil: nullTime(i.DeferUntil),
+			DueAt: nullTime(i.DueAt), DeferUntil: nullTime(i.DeferUntil),
 		})
 	}
 	return fmt.Errorf("unknown driver")
@@ -1456,4 +1456,32 @@ func isUniqueViolation(err error) bool {
 	return strings.Contains(msg, "UNIQUE constraint") ||
 		strings.Contains(msg, "duplicate key value") ||
 		strings.Contains(msg, "SQLSTATE 23505")
+}
+
+// AnnotateComment writes the provenance pointer onto a comment, overwriting
+// whatever was there. The three columns are written by this raw UPDATE and
+// never by the sqlc-generated comment writers, which do not know them.
+// Returns ErrNotFound when no comment carries the id.
+func (s *Store) AnnotateComment(ctx context.Context, id, sessionID, msgID, toolUseID string) error {
+	q := s.rebind(`UPDATE comments SET session_id = ?, msg_id = ?, tool_use_id = ? WHERE id = ?`)
+	res, err := s.db.ExecContext(ctx, q, sessionID, msgID, toolUseID, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CommentPointer reads the provenance pointer off a comment.
+func (s *Store) CommentPointer(ctx context.Context, id string) (ProvenancePointer, error) {
+	q := s.rebind(`SELECT session_id, msg_id, tool_use_id FROM comments WHERE id = ?`)
+	var p ProvenancePointer
+	err := s.db.QueryRowContext(ctx, q, id).Scan(&p.SessionID, &p.MsgID, &p.ToolUseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, ErrNotFound
+	}
+	return p, err
 }

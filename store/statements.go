@@ -653,8 +653,8 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
 	var (
 		id, kind, text, filedBy, status, scope, evidence string
-		createdAt                                         time.Time
-		nsIssue, nsSupersedes, nsAnswered, nsSource       sql.NullString
+		createdAt                                        time.Time
+		nsIssue, nsSupersedes, nsAnswered, nsSource      sql.NullString
 	)
 	if err := row.Scan(&id, &kind, &nsIssue, &text, &createdAt, &filedBy, &status, &scope, &nsSupersedes, &nsAnswered, &nsSource, &evidence); err != nil {
 		return nil, err
@@ -678,8 +678,8 @@ func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
 func scanStatementRows(rows *sql.Rows) (*beads.Statement, error) {
 	var (
 		id, kind, text, filedBy, status, scope, evidence string
-		createdAt                                         time.Time
-		nsIssue, nsSupersedes, nsAnswered, nsSource       sql.NullString
+		createdAt                                        time.Time
+		nsIssue, nsSupersedes, nsAnswered, nsSource      sql.NullString
 	)
 	if err := rows.Scan(&id, &kind, &nsIssue, &text, &createdAt, &filedBy, &status, &scope, &nsSupersedes, &nsAnswered, &nsSource, &evidence); err != nil {
 		return nil, err
@@ -715,4 +715,41 @@ func (s *Store) ListAllComments(ctx context.Context) ([]beads.Comment, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// ProvenancePointer locates the session, message and tool call that wrote a
+// statement or a comment. It is a locator, not authority: annotating twice
+// overwrites, and an empty SessionID means nothing was ever recorded.
+type ProvenancePointer struct {
+	SessionID string `json:"session_id"`
+	MsgID     string `json:"msg_id"`
+	ToolUseID string `json:"tool_use_id"`
+}
+
+// AnnotateStatement writes the provenance pointer onto a statement, overwriting
+// whatever was there. Returns ErrNotFound when no statement carries the id.
+func (s *Store) AnnotateStatement(ctx context.Context, id, sessionID, msgID, toolUseID string) error {
+	q := s.rebind(`UPDATE statements SET session_id = ?, msg_id = ?, tool_use_id = ? WHERE id = ?`)
+	res, err := s.db.ExecContext(ctx, q, sessionID, msgID, toolUseID, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// StatementPointer reads the provenance pointer off a statement. The three
+// columns are read with plain SQL rather than through beads.Statement, which
+// does not carry them.
+func (s *Store) StatementPointer(ctx context.Context, id string) (ProvenancePointer, error) {
+	q := s.rebind(`SELECT session_id, msg_id, tool_use_id FROM statements WHERE id = ?`)
+	var p ProvenancePointer
+	err := s.db.QueryRowContext(ctx, q, id).Scan(&p.SessionID, &p.MsgID, &p.ToolUseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, ErrNotFound
+	}
+	return p, err
 }
