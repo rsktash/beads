@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -139,6 +140,14 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 			}
 			defer cc.store.Close()
 
+			// Print the bead's own existing rulings to stderr, and refuse a
+			// write that repeats one of their headlines — unless this ruling
+			// supersedes one explicitly, which is the sanctioned way to
+			// restate.
+			if err := printExistingRulingsAndCheckDuplicate(cc, cmd.ErrOrStderr(), issueID, text, st.SupersedesID != nil); err != nil {
+				return err
+			}
+
 			// Use atomic transaction that spans statements and issues.
 			if answersID != "" {
 				err = cc.store.CreateRulingWithStateChange(cc.ctx, st, upd, answersID)
@@ -161,4 +170,56 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 	cmd.Flags().BoolVar(&closeFlag, "close", false, "close the bead (atomic with ruling)")
 	cmd.Flags().BoolVar(&parkFlag, "park", false, "park the bead (defer far future + label 'parked', atomic with ruling)")
 	return cmd
+}
+
+// printExistingRulingsAndCheckDuplicate lists the set a new ruling would
+// join — the bead's own active rulings for an issue-scoped ruling, or the
+// project-scoped rows for a project ruling (never the inheritance-resolved
+// set: the refusal below must stay actionable with --supersedes, and a
+// child bead cannot supersede a ruling it only inherited). The listing
+// always prints, even when the write goes on to succeed or the set is
+// empty, and always to errW (stderr) so the command's stdout stays new-id-only.
+// When skipDuplicateCheck is false, it also refuses a text whose headline
+// (case-insensitive, first 120 runes) repeats an existing one.
+func printExistingRulingsAndCheckDuplicate(cc *cmdCtx, errW io.Writer, issueID *string, text string, skipDuplicateCheck bool) error {
+	f := store.StatementFilter{Kinds: []string{"ruling"}, Statuses: []string{"active"}}
+	var scopeLabel, headlineIssueID string
+	if issueID != nil {
+		f.IssueIDs = []string{*issueID}
+		scopeLabel = *issueID
+		headlineIssueID = *issueID
+	} else {
+		f.IssueIDs = []string{""}
+		scopeLabel = "the project"
+	}
+
+	list, err := cc.store.ListStatements(cc.ctx, f)
+	if err != nil {
+		return err
+	}
+
+	if len(list) == 0 {
+		fmt.Fprintf(errW, "no existing rulings on %s\n", scopeLabel)
+	} else {
+		fmt.Fprintf(errW, "existing rulings on %s (%d):\n", scopeLabel, len(list))
+		for _, r := range list {
+			fmt.Fprintln(errW, "  "+rulingHeadline(r, headlineIssueID))
+		}
+	}
+
+	if skipDuplicateCheck {
+		return nil
+	}
+
+	newHeadline := strings.ToLower(headlineText(text))
+	for _, r := range list {
+		if strings.ToLower(headlineText(r.Text)) == newHeadline {
+			addArgs := fmt.Sprintf("%q", "<text>")
+			if issueID != nil {
+				addArgs = fmt.Sprintf("%s %q", *issueID, "<text>")
+			}
+			return fmt.Errorf("%s already says this on %s — amend it with `bd ruling add %s --supersedes %s`, or file a question if it is genuinely a new decision", r.ID, scopeLabel, addArgs, r.ID)
+		}
+	}
+	return nil
 }
