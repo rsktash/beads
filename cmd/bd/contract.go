@@ -58,13 +58,16 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 				for _, ln := range strings.Split(r.Text, "\n") {
 					fmt.Fprintln(w, "      "+ln)
 				}
+				if strings.TrimSpace(r.Verbatim) != "" {
+					fmt.Fprintf(w, "      verbatim: %s\n", r.Verbatim)
+				}
 			}
 		}
 	}
 	if len(cv.Questions) > 0 {
 		fmt.Fprintln(w, "\nOPEN QUESTIONS — EXECUTION BLOCKERS")
 		for _, q := range cv.Questions {
-			fmt.Fprintf(w, "  %s  %s  %s\n", q.ID, q.CreatedAt.Format("2006-01-02"), q.Text)
+			fmt.Fprintf(w, "  %s  %s  %s  %s\n", q.ID, q.CreatedAt.Format("2006-01-02"), authorColumn(q.FiledBy), q.Text)
 		}
 	}
 	if len(cv.ClosedQuestions) > 0 {
@@ -76,7 +79,7 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 	if len(cv.Findings) > 0 {
 		fmt.Fprintln(w, "\nFINDINGS")
 		for _, f := range cv.Findings {
-			base := fmt.Sprintf("  %s  %s  [%s]  %s", f.ID, f.CreatedAt.Format("2006-01-02"), f.FiledBy, f.Text)
+			base := fmt.Sprintf("  %s  %s  %s  %s", f.ID, f.CreatedAt.Format("2006-01-02"), authorColumn(f.FiledBy), f.Text)
 			if strings.TrimSpace(f.Evidence) != "" {
 				base += fmt.Sprintf("  evidence: %s", f.Evidence)
 			}
@@ -106,11 +109,21 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 	return nil
 }
 
+// authorColumn is actorWord(filedBy) with "unknown" for an empty filed_by —
+// the byline every rendered record (question, closed question, finding)
+// shares with the ruling headline.
+func authorColumn(filedBy string) string {
+	if filedBy == "" {
+		return "unknown"
+	}
+	return actorWord(filedBy)
+}
+
 // formatClosedQuestionLine renders one question that has stopped blocking. It
 // must show enough that a reader never has to look an id up: how it stopped
 // blocking, why, and what settled it.
 func formatClosedQuestionLine(q beads.Statement, answerKinds map[string]string) string {
-	line := fmt.Sprintf("  %s  %s  %s", q.ID, q.CreatedAt.Format("2006-01-02"), q.Status)
+	line := fmt.Sprintf("  %s  %s  %s  %s", q.ID, q.CreatedAt.Format("2006-01-02"), authorColumn(q.FiledBy), q.Status)
 	reason, note, isClosure := decodeClosure(q.Evidence)
 	// The superseded reason writes the status of the same name; printing both
 	// would read as "superseded (superseded)".

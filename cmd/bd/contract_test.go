@@ -800,7 +800,9 @@ func TestContract_FindingsEvidence(t *testing.T) {
 	mustCreateStatementDirect(t, st, &beads.Statement{Kind: "finding", Text: "found bug", IssueID: strPtr2(issue.ID), FiledBy: "tester:owner", Evidence: "src/main.go:42"})
 	out := renderContractOutput(t, st, issue.ID, showOpts{})
 	mustContain(t, out, "evidence: src/main.go:42")
-	mustContain(t, out, "[tester:owner]")
+	// Feature 4: the bracket around FiledBy became the bare actor word.
+	mustContain(t, out, "  tester  ")
+	mustNotContain(t, out, "[tester:owner]")
 	mustNotContainCI(t, out, "comment")
 }
 
