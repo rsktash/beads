@@ -779,10 +779,11 @@ func (s *Store) Ancestors(ctx context.Context, issueID string) ([]string, error)
 // It selects from the resolved_statements view which already encodes inheritance,
 // project scope, depth and supersession filtering. One query, no Go-side walk.
 func (s *Store) ContractStatements(ctx context.Context, issueID string) (ContractView, error) {
-	// The view carries no verbatim column (rulings are the only kind that
-	// uses it), so join back to statements for it rather than widening the
-	// view.
-	q := s.rebind(`SELECT rs.statement_id, rs.kind, rs.text, rs.created_at, rs.filed_by, rs.evidence, rs.origin_kind, rs.origin_issue_id, rs.depth, stmt.verbatim
+	// The view carries no verbatim, law or rationale column (rulings are the
+	// only kind that uses them), so join back to statements for them rather
+	// than widening the view. law and rationale are what makes a doctrine
+	// render as its law in the contract's ACTIVE RULINGS block.
+	q := s.rebind(`SELECT rs.statement_id, rs.kind, rs.text, rs.created_at, rs.filed_by, rs.evidence, rs.origin_kind, rs.origin_issue_id, rs.depth, stmt.verbatim, stmt.law, stmt.rationale
 		FROM resolved_statements rs
 		JOIN statements stmt ON stmt.id = rs.statement_id
 		WHERE rs.issue_id = ?
@@ -799,11 +800,11 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 	// the ORDER BY above has already put the nearest origin first.
 	seen := map[string]bool{}
 	for rows.Next() {
-		var statementID, kind, text, filedBy, evidence, originKind, verbatim string
+		var statementID, kind, text, filedBy, evidence, originKind, verbatim, law, rationale string
 		var createdAt time.Time
 		var originIssueID sql.NullString
 		var depth sql.NullInt64
-		if err := rows.Scan(&statementID, &kind, &text, &createdAt, &filedBy, &evidence, &originKind, &originIssueID, &depth, &verbatim); err != nil {
+		if err := rows.Scan(&statementID, &kind, &text, &createdAt, &filedBy, &evidence, &originKind, &originIssueID, &depth, &verbatim, &law, &rationale); err != nil {
 			return ContractView{}, err
 		}
 		if seen[statementID] {
@@ -820,6 +821,8 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 			Status:    "active",
 			Scope:     "inherit",
 			Verbatim:  verbatim,
+			Law:       law,
+			Rationale: rationale,
 		}
 		// Map view's origin to Statement.IssueID so existing renderer keeps its
 		// bracket logic: self -> own id (no bracket), epic/blocks/binds ->

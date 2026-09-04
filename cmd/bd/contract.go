@@ -58,6 +58,9 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 				for _, ln := range strings.Split(r.Text, "\n") {
 					fmt.Fprintln(w, "      "+ln)
 				}
+				if strings.TrimSpace(r.Rationale) != "" {
+					fmt.Fprintf(w, "      rationale: %s\n", r.Rationale)
+				}
 				if strings.TrimSpace(r.Verbatim) != "" {
 					fmt.Fprintf(w, "      verbatim: %s\n", r.Verbatim)
 				}
@@ -176,13 +179,24 @@ func rulingFields(st beads.Statement, issueID, text string) string {
 // of the text. Both `bd show` (with a leading two-space indent added by the
 // caller) and `bd rulings` (without it) go through this.
 func rulingHeadline(st beads.Statement, issueID string) string {
-	return rulingFields(st, issueID, headlineText(st.Text))
+	return rulingFields(st, issueID, headlineText(rulingLineText(st)))
+}
+
+// rulingLineText is what a rendered ruling line says: a doctrine's law, which
+// is the one sentence the law was written to be, and the ruling's own text for
+// every ruling that carries no law. The text is never lost — --expand prints
+// it under the headline.
+func rulingLineText(st beads.Statement) string {
+	if law := strings.TrimSpace(st.Law); law != "" {
+		return law
+	}
+	return st.Text
 }
 
 // rulingFullLine is rulingHeadline's untruncated counterpart, used under
 // `--rulings full`.
 func rulingFullLine(st beads.Statement, issueID string) string {
-	return rulingFields(st, issueID, st.Text)
+	return rulingFields(st, issueID, rulingLineText(st))
 }
 
 // headlineText collapses a statement's text to a single line and truncates

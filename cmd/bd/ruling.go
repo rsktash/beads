@@ -56,6 +56,9 @@ func newRulingAddCmd() *cobra.Command {
 		binds      string
 		topic      string
 		concern    string
+		law        string
+		rationale  string
+		doctrine   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add [<issue-id>] <text> --topic <slug>",
@@ -68,7 +71,15 @@ Flags --defer, --park and --close atomically update the bead's state in the same
 --topic is required, project-scoped rulings included, unless --answers names a
 question: a ruling then inherits that question's topic, workspace and concern,
 and an explicit --topic that disagrees with it is refused. --concern names the
-area of a project-scoped ruling, which has no bead to read areas from.
+area of a project-scoped ruling, which has no bead to read areas from, and must
+name a concern the area vocabulary carries.
+
+--doctrine files a standing law: a project-scoped ruling carrying an area, a
+one-sentence --law and an optional --rationale, which bd doctrine render writes
+into the doctrine page. It takes no issue id — a bead's ruling becomes doctrine
+through bd doctrine promote. Before the write, every law already standing over
+the same area prints to stderr, so a contradiction is on screen while there is
+still time to supersede instead.
 
 Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question instead. BD_ACTOR=coordinator or unset (owner) is allowed.`,
 		Args: cobra.RangeArgs(1, 2),
@@ -94,6 +105,20 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 			}
 			if text == "" {
 				return fmt.Errorf("text is required")
+			}
+
+			// A doctrine is a project law. An issue id would file it on a
+			// bead, where nothing reads it as doctrine at all.
+			if doctrine && issueID != nil {
+				return fmt.Errorf("--doctrine files a project law and takes no issue id; re-scope a bead's ruling with `bd doctrine promote %s --concern <name>`", *issueID)
+			}
+			if doctrine || strings.TrimSpace(law) != "" {
+				if err := validateDoctrineLaw(law); err != nil {
+					return err
+				}
+			}
+			if err := validateDoctrineRationale(rationale); err != nil {
+				return err
 			}
 
 			// Validate mutually exclusive state flags
@@ -129,13 +154,15 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 
 			// Build statement
 			st := &beads.Statement{
-				Kind:     "ruling",
-				IssueID:  issueID,
-				Text:     text,
-				FiledBy:  identity,
-				Status:   "active",
-				Scope:    scopeVal,
-				Verbatim: strings.TrimSpace(verbatim),
+				Kind:      "ruling",
+				IssueID:   issueID,
+				Text:      text,
+				FiledBy:   identity,
+				Status:    "active",
+				Scope:     scopeVal,
+				Verbatim:  strings.TrimSpace(verbatim),
+				Law:       strings.TrimSpace(law),
+				Rationale: strings.TrimSpace(rationale),
 			}
 			if f.Changed("supersedes") && supersedes != "" {
 				s := strings.TrimSpace(supersedes)
@@ -185,15 +212,24 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 			// Topic before the duplicate listing: a ruling with no topic is
 			// refused with the catalogue, and printing both menus at once
 			// would bury the one the writer must act on.
+			if err := validateAreaName(cc, store.AreaConcern, concern); err != nil {
+				return err
+			}
 			if err := applyRulingTopic(cc, cmd.ErrOrStderr(), st, answersID, topic, concern); err != nil {
 				return err
+			}
+			// A law with no area binds nothing: `bd doctrine` and the DOCTRINE
+			// section both read an area, so an arealess law would be filed and
+			// never seen again.
+			if doctrine && st.Concern == "" && st.Workspace == "" {
+				return fmt.Errorf("--doctrine needs an area: name it with --concern <name>, or answer a question that carries one")
 			}
 
 			// Print the bead's own existing rulings to stderr, and refuse a
 			// write that repeats one of their headlines — unless this ruling
 			// supersedes one explicitly, which is the sanctioned way to
 			// restate.
-			if err := printExistingRulingsAndCheckDuplicate(cc, cmd.ErrOrStderr(), issueID, text, st.SupersedesID != nil); err != nil {
+			if err := printExistingRulingsAndCheckDuplicate(cc, cmd.ErrOrStderr(), issueID, text, st.SupersedesID != nil, st.Concern); err != nil {
 				return err
 			}
 
@@ -222,6 +258,9 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 	cmd.Flags().StringVar(&binds, "binds", "", "attach this ruling explicitly to a second bead (issue-scoped rulings only)")
 	cmd.Flags().StringVar(&topic, "topic", "", "topic slug this ruling belongs to (required unless --answers supplies it)")
 	cmd.Flags().StringVar(&concern, "concern", "", "concern for a project-scoped ruling, which has no bead to read areas from")
+	cmd.Flags().BoolVar(&doctrine, "doctrine", false, "file a standing law: a project-scoped ruling with an area, a --law and a --rationale")
+	cmd.Flags().StringVar(&law, "law", "", "the law itself: one imperative sentence ending in a full stop (max 200 characters)")
+	cmd.Flags().StringVar(&rationale, "rationale", "", "why the law holds, and the pointers behind it (max 600 characters)")
 	return cmd
 }
 
@@ -234,7 +273,11 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 // empty, and always to errW (stderr) so the command's stdout stays new-id-only.
 // When skipDuplicateCheck is false, it also refuses a text whose headline
 // (case-insensitive, first 120 runes) repeats an existing one.
-func printExistingRulingsAndCheckDuplicate(cc *cmdCtx, errW io.Writer, issueID *string, text string, skipDuplicateCheck bool) error {
+//
+// concern narrows a project listing to one area. A law is written against the
+// laws that already stand over its area, and the project set as a whole is too
+// long to read at the moment of writing one.
+func printExistingRulingsAndCheckDuplicate(cc *cmdCtx, errW io.Writer, issueID *string, text string, skipDuplicateCheck bool, concern string) error {
 	f := store.StatementFilter{Kinds: []string{"ruling"}, Statuses: []string{"active"}}
 	var scopeLabel, headlineIssueID string
 	if issueID != nil {
@@ -249,6 +292,12 @@ func printExistingRulingsAndCheckDuplicate(cc *cmdCtx, errW io.Writer, issueID *
 	list, err := cc.store.ListStatements(cc.ctx, f)
 	if err != nil {
 		return err
+	}
+	if issueID == nil {
+		if area := strings.TrimSpace(concern); area != "" {
+			list = rulingsInConcern(list, area)
+			scopeLabel = "the project, concern " + area
+		}
 	}
 
 	if len(list) == 0 {
