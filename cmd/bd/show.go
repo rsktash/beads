@@ -161,7 +161,7 @@ func parseExpandSet(ids []string) map[string]bool {
 type includeSet struct {
 	comments   bool
 	labels     bool
-	deps     bool
+	deps       bool
 	statements bool
 	all        bool
 }
