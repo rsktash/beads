@@ -73,6 +73,7 @@ func newRoot() *cobra.Command {
 		newSessionCmd(),
 		newTopicsCmd(),
 		newAuthorityCmd(),
+		newDoctrineCmd(),
 	)
 	return root
 }
