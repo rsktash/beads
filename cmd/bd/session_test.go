@@ -52,7 +52,7 @@ func mkSessionComment(t *testing.T, st *store.Store, issueID, author, text strin
 		t.Fatalf("add comment %q: %v", text, err)
 	}
 	if session != "" {
-		if err := st.AnnotateComment(ctx, c.ID, session, "msg-"+c.ID, "toolu_"+c.ID); err != nil {
+		if err := st.AnnotateComment(ctx, c.ID, session, "msg-"+c.ID, "toolu_"+c.ID, ""); err != nil {
 			t.Fatalf("annotate comment %s: %v", c.ID, err)
 		}
 	}
@@ -69,7 +69,7 @@ func mkSessionStatement(t *testing.T, st *store.Store, kind, issueID, filedBy, t
 		t.Fatalf("create %s %q: %v", kind, text, err)
 	}
 	if session != "" {
-		if err := st.AnnotateStatement(ctx, s.ID, session, "msg-"+s.ID, "toolu_"+s.ID); err != nil {
+		if err := st.AnnotateStatement(ctx, s.ID, session, "msg-"+s.ID, "toolu_"+s.ID, ""); err != nil {
 			t.Fatalf("annotate statement %s: %v", s.ID, err)
 		}
 	}
@@ -186,7 +186,7 @@ func TestSessionClose_IgnoresAgentComment(t *testing.T) {
 		t.Fatalf("expected 2 comments, got %d", len(comments))
 	}
 	for _, c := range comments {
-		if err := st2.AnnotateComment(ctx, c.ID, testSessionID, "msg-"+c.ID, "toolu_"+c.ID); err != nil {
+		if err := st2.AnnotateComment(ctx, c.ID, testSessionID, "msg-"+c.ID, "toolu_"+c.ID, ""); err != nil {
 			t.Fatalf("annotate %s: %v", c.ID, err)
 		}
 	}

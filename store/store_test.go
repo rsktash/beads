@@ -315,6 +315,30 @@ func TestPostgresSearchPathExtraction(t *testing.T) {
 	}
 }
 
+// TestAnnotateComment_RoundTripsTranscriptPath pins the fourth pointer column
+// on comments: a path written by AnnotateComment is read back by
+// CommentPointer.
+func TestAnnotateComment_RoundTripsTranscriptPath(t *testing.T) {
+	ctx := context.Background()
+	st := newSqliteStoreWithPrefix(t, "annocom")
+	issue := mkIssue(t, st, "comment transcript path", 1)
+	c := &beads.Comment{IssueID: issue.ID, Author: "alice", Text: "note", CreatedAt: time.Now().UTC()}
+	if err := st.AddComment(ctx, c); err != nil {
+		t.Fatalf("add comment: %v", err)
+	}
+
+	if err := st.AnnotateComment(ctx, c.ID, "sess-c", "msg-c", "toolu_c", "/tmp/other-project/comment.jsonl"); err != nil {
+		t.Fatalf("annotate comment: %v", err)
+	}
+	p, err := st.CommentPointer(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("comment pointer: %v", err)
+	}
+	if p.TranscriptPath != "/tmp/other-project/comment.jsonl" {
+		t.Fatalf("transcript path mismatch: got %+v", p)
+	}
+}
+
 func TestPriorityCheckConstraint(t *testing.T) {
 	st := newSqliteStore(t)
 	ctx := context.Background()

@@ -162,3 +162,85 @@ func TestAnnotate_UnknownIDIsNotFound(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %q", err.Error())
 	}
 }
+
+func TestAnnotate_TranscriptStoredOnStatement(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "annotate transcript statement")
+	rID := mkRulingStatement(t, st, issue.ID, "a ruling with a transcript path")
+	_ = st.Close()
+
+	if _, _, err := runAnnotate(t, []string{rID,
+		"--session", "sess-t", "--msg", "msg-t", "--tool", "toolu_t",
+		"--transcript", "/tmp/other-project/sess-t.jsonl",
+	}); err != nil {
+		t.Fatalf("annotate: %v", err)
+	}
+	got := readStatementPointer(t, dsn, rID)
+	if got.TranscriptPath != "/tmp/other-project/sess-t.jsonl" {
+		t.Fatalf("expected the transcript path stored, got %+v", got)
+	}
+}
+
+func TestAnnotate_TranscriptStoredOnComment(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "annotate transcript comment")
+	cID := mkCommentForAnnotate(t, st, issue.ID, "a comment with a transcript path")
+	_ = st.Close()
+
+	if _, _, err := runAnnotate(t, []string{cID,
+		"--session", "sess-ct", "--msg", "msg-ct", "--tool", "toolu_ct",
+		"--transcript", "/tmp/other-project/sess-ct.jsonl",
+	}); err != nil {
+		t.Fatalf("annotate comment: %v", err)
+	}
+
+	ctx := context.Background()
+	st2, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st2.Close()
+	p, err := st2.CommentPointer(ctx, cID)
+	if err != nil {
+		t.Fatalf("comment pointer: %v", err)
+	}
+	if p.TranscriptPath != "/tmp/other-project/sess-ct.jsonl" {
+		t.Fatalf("expected the transcript path stored on the comment, got %+v", p)
+	}
+}
+
+func TestAnnotate_TranscriptOmittedStoresEmpty(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "annotate transcript omitted")
+	rID := mkRulingStatement(t, st, issue.ID, "a rule annotated without a transcript")
+	_ = st.Close()
+
+	if _, _, err := runAnnotate(t, []string{rID, "--session", "sess-o", "--msg", "msg-o", "--tool", "toolu_o"}); err != nil {
+		t.Fatalf("annotate: %v", err)
+	}
+	got := readStatementPointer(t, dsn, rID)
+	if got.TranscriptPath != "" {
+		t.Fatalf("an annotate without --transcript must store '', got %+v", got)
+	}
+}
+
+func TestAnnotate_TranscriptOmittedClearsStored(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "annotate transcript cleared")
+	rID := mkRulingStatement(t, st, issue.ID, "a rule annotated twice, second time without a transcript")
+	_ = st.Close()
+
+	if _, _, err := runAnnotate(t, []string{rID,
+		"--session", "sess-x", "--msg", "msg-x", "--tool", "toolu_x",
+		"--transcript", "/tmp/other-project/sess-x.jsonl",
+	}); err != nil {
+		t.Fatalf("first annotate: %v", err)
+	}
+	if _, _, err := runAnnotate(t, []string{rID, "--session", "sess-x", "--msg", "msg-x", "--tool", "toolu_x"}); err != nil {
+		t.Fatalf("second annotate: %v", err)
+	}
+	got := readStatementPointer(t, dsn, rID)
+	if got.TranscriptPath != "" {
+		t.Fatalf("a second annotate without --transcript must clear the stored path, got %+v", got)
+	}
+}

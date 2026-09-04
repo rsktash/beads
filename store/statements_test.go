@@ -36,8 +36,8 @@ func TestMigrationVersion4Applied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus: %v", err)
 	}
-	if len(status) != 12 {
-		t.Fatalf("expected 12 migrations, got %d: %+v", len(status), status)
+	if len(status) != 13 {
+		t.Fatalf("expected 13 migrations, got %d: %+v", len(status), status)
 	}
 	for _, m := range status {
 		if !m.Applied {
@@ -75,8 +75,40 @@ func TestMigrationIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus second: %v", err)
 	}
-	if len(status) != 12 {
-		t.Fatalf("expected 12 after second open, got %d", len(status))
+	if len(status) != 13 {
+		t.Fatalf("expected 13 after second open, got %d", len(status))
+	}
+}
+
+// TestAnnotateStatement_RoundTripsTranscriptPath pins the fourth pointer
+// column: a path written by AnnotateStatement is read back by
+// StatementPointer, including the overwrite-to-empty semantics.
+func TestAnnotateStatement_RoundTripsTranscriptPath(t *testing.T) {
+	ctx := context.Background()
+	st := newSqliteStoreWithPrefix(t, "annost")
+	issue := mkIssue(t, st, "statement transcript path", 1)
+	r := mustCreateStatement(t, st, &beads.Statement{Kind: "ruling", Text: "r", IssueID: strPtr(issue.ID)})
+
+	if err := st.AnnotateStatement(ctx, r.ID, "sess-st", "msg-st", "toolu_st", "/tmp/other-project/sess.jsonl"); err != nil {
+		t.Fatalf("annotate: %v", err)
+	}
+	p, err := st.StatementPointer(ctx, r.ID)
+	if err != nil {
+		t.Fatalf("pointer: %v", err)
+	}
+	if p.TranscriptPath != "/tmp/other-project/sess.jsonl" {
+		t.Fatalf("transcript path mismatch: got %+v", p)
+	}
+
+	if err := st.AnnotateStatement(ctx, r.ID, "sess-st", "msg-st", "toolu_st", ""); err != nil {
+		t.Fatalf("re-annotate: %v", err)
+	}
+	p, err = st.StatementPointer(ctx, r.ID)
+	if err != nil {
+		t.Fatalf("pointer after clear: %v", err)
+	}
+	if p.TranscriptPath != "" {
+		t.Fatalf("re-annotate without a path must clear it, got %+v", p)
 	}
 }
 
@@ -544,8 +576,8 @@ func TestPostgresStatements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration status pg: %v", err)
 	}
-	if len(status) != 12 {
-		t.Fatalf("expected 12 migrations pg, got %d", len(status))
+	if len(status) != 13 {
+		t.Fatalf("expected 13 migrations pg, got %d", len(status))
 	}
 	var cnt int
 	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM resolved_statements`).Scan(&cnt); err != nil {

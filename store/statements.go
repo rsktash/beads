@@ -1057,17 +1057,21 @@ func (s *Store) ListAllComments(ctx context.Context) ([]beads.Comment, error) {
 // ProvenancePointer locates the session, message and tool call that wrote a
 // statement or a comment. It is a locator, not authority: annotating twice
 // overwrites, and an empty SessionID means nothing was ever recorded.
+// TranscriptPath is the transcript file the writing session actually saw;
+// empty means the pointer predates the column and the reader falls back to
+// the cwd-derived path.
 type ProvenancePointer struct {
-	SessionID string `json:"session_id"`
-	MsgID     string `json:"msg_id"`
-	ToolUseID string `json:"tool_use_id"`
+	SessionID      string `json:"session_id"`
+	MsgID          string `json:"msg_id"`
+	ToolUseID      string `json:"tool_use_id"`
+	TranscriptPath string `json:"transcript_path"`
 }
 
 // AnnotateStatement writes the provenance pointer onto a statement, overwriting
 // whatever was there. Returns ErrNotFound when no statement carries the id.
-func (s *Store) AnnotateStatement(ctx context.Context, id, sessionID, msgID, toolUseID string) error {
-	q := s.rebind(`UPDATE statements SET session_id = ?, msg_id = ?, tool_use_id = ? WHERE id = ?`)
-	res, err := s.db.ExecContext(ctx, q, sessionID, msgID, toolUseID, id)
+func (s *Store) AnnotateStatement(ctx context.Context, id, sessionID, msgID, toolUseID, transcriptPath string) error {
+	q := s.rebind(`UPDATE statements SET session_id = ?, msg_id = ?, tool_use_id = ?, transcript_path = ? WHERE id = ?`)
+	res, err := s.db.ExecContext(ctx, q, sessionID, msgID, toolUseID, transcriptPath, id)
 	if err != nil {
 		return err
 	}
@@ -1082,9 +1086,9 @@ func (s *Store) AnnotateStatement(ctx context.Context, id, sessionID, msgID, too
 // columns are read with plain SQL rather than through beads.Statement, which
 // does not carry them.
 func (s *Store) StatementPointer(ctx context.Context, id string) (ProvenancePointer, error) {
-	q := s.rebind(`SELECT session_id, msg_id, tool_use_id FROM statements WHERE id = ?`)
+	q := s.rebind(`SELECT session_id, msg_id, tool_use_id, transcript_path FROM statements WHERE id = ?`)
 	var p ProvenancePointer
-	err := s.db.QueryRowContext(ctx, q, id).Scan(&p.SessionID, &p.MsgID, &p.ToolUseID)
+	err := s.db.QueryRowContext(ctx, q, id).Scan(&p.SessionID, &p.MsgID, &p.ToolUseID, &p.TranscriptPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
