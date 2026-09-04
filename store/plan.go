@@ -48,6 +48,12 @@ type PlanLane struct {
 	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
 }
 
+// QueueSlot identifies one bead's lane and one-based position in that lane.
+type QueueSlot struct {
+	Lane  string
+	Index int
+}
+
 // Next returns the queue entry the cursor points at, or "" when the lane is
 // exhausted. Readiness is never read from this value — see cmd/bd plan show.
 func (l PlanLane) Next() string {
@@ -181,6 +187,32 @@ func (s *Store) ActivePlan(ctx context.Context) (*ExecutionPlan, error) {
 		return nil, &ErrTwoActivePlans{A: plans[0].ID, B: plans[1].ID}
 	}
 	return &plans[0], nil
+}
+
+// ActivePlanQueue returns the queue slots for the single active plan. With no
+// active plan it returns an empty plan id and a nil order map.
+func (s *Store) ActivePlanQueue(ctx context.Context) (string, map[string]QueueSlot, error) {
+	plan, err := s.ActivePlan(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	if plan == nil {
+		return "", nil, nil
+	}
+	lanes, err := s.ListLanes(ctx, plan.ID)
+	if err != nil {
+		return "", nil, err
+	}
+	order := make(map[string]QueueSlot)
+	for _, lane := range lanes {
+		for i, issueID := range lane.Queue {
+			if _, exists := order[issueID]; exists {
+				continue
+			}
+			order[issueID] = QueueSlot{Lane: lane.Lane, Index: i + 1}
+		}
+	}
+	return plan.ID, order, nil
 }
 
 // DeletePlan removes a plan; lanes, sessions and handoffs cascade.
@@ -412,6 +444,55 @@ func (s *Store) LastHandoffAt(ctx context.Context, planID, lane string) (*time.T
 		return nil, err
 	}
 	return &at, nil
+}
+
+// NewestHandoffAt returns the newest handoff across every plan and lane. No
+// handoff is represented by a nil instant.
+func (s *Store) NewestHandoffAt(ctx context.Context) (*time.Time, error) {
+	var at time.Time
+	err := s.db.QueryRowContext(ctx, `SELECT created_at FROM plan_handoff WHERE created_at = (SELECT MAX(created_at) FROM plan_handoff) LIMIT 1`).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &at, nil
+}
+
+// BlockerClearedSince returns beads whose question was answered or whose
+// blocking dependency closed at or after since.
+func (s *Store) BlockerClearedSince(ctx context.Context, since time.Time) (map[string]bool, error) {
+	q := s.rebind(`
+SELECT issue_id
+FROM statements
+WHERE kind = 'question'
+  AND status = 'answered'
+  AND issue_id IS NOT NULL
+  AND COALESCE(changed_at, created_at) >= ?
+UNION
+SELECT d.issue_id
+FROM dependencies d
+JOIN issues blocker ON blocker.id = d.depends_on_id
+WHERE d.type = 'blocks'
+  AND blocker.closed_at IS NOT NULL
+  AND blocker.closed_at >= ?`)
+	rows, err := s.db.QueryContext(ctx, q, since, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var issueID string
+		if err := rows.Scan(&issueID); err != nil {
+			return nil, err
+		}
+		if issueID != "" {
+			out[issueID] = true
+		}
+	}
+	return out, rows.Err()
 }
 
 // LastHandoffPerLane keys a plan's most recent handoff entry by lane.
