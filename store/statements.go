@@ -404,9 +404,6 @@ func applyIssueUpdateTx(ctx context.Context, tx *sql.Tx, s *Store, issueID strin
 	if u.Description != nil {
 		add("description", *u.Description)
 	}
-	if u.Design != nil {
-		add("design", *u.Design)
-	}
 	if u.AcceptanceCriteria != nil {
 		add("acceptance_criteria", *u.AcceptanceCriteria)
 	}

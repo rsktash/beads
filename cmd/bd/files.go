@@ -7,7 +7,7 @@ import (
 )
 
 // readFileContents reads a file path or "-" for stdin. Used by --body-file
-// / --design-file on create + update so agents can write structured prose
+// on create + update so agents can write structured prose
 // without shell-escaping pain.
 func readFileContents(path string) (string, error) {
 	if path == "-" {

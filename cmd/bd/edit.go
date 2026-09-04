@@ -21,7 +21,6 @@ import (
 type editForm struct {
 	Title              string   `yaml:"title"`
 	Description        string   `yaml:"description"`
-	Design             string   `yaml:"design,omitempty"`
 	AcceptanceCriteria string   `yaml:"acceptance_criteria,omitempty"`
 	Notes              string   `yaml:"notes,omitempty"`
 	Type               string   `yaml:"type"`
@@ -59,7 +58,6 @@ func newEditCmd() *cobra.Command {
 			form := editForm{
 				Title:              i.Title,
 				Description:        i.Description,
-				Design:             i.Design,
 				AcceptanceCriteria: i.AcceptanceCriteria,
 				Notes:              i.Notes,
 				Type:               string(i.Type),
@@ -104,9 +102,6 @@ func applyEdit(cc *cmdCtx, id string, before, after *editForm) error {
 	}
 	if before.Description != after.Description {
 		u.Description = &after.Description
-	}
-	if before.Design != after.Design {
-		u.Design = &after.Design
 	}
 	if before.AcceptanceCriteria != after.AcceptanceCriteria {
 		u.AcceptanceCriteria = &after.AcceptanceCriteria

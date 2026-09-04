@@ -12,7 +12,7 @@ import (
 func fromSqliteIssue(r sqlitedb.Issue) *beads.Issue {
 	return assemble(issueFields{
 		ID: r.ID, ContentHash: r.ContentHash, Title: r.Title,
-		Description: r.Description, Design: r.Design,
+		Description:        r.Description,
 		AcceptanceCriteria: r.AcceptanceCriteria, Notes: r.Notes,
 		Status: r.Status, Priority: int(r.Priority), Type: r.IssueType,
 		Assignee: r.Assignee, EstimatedMinutes: int(r.EstimatedMinutes),
@@ -32,7 +32,7 @@ func fromSqliteIssue(r sqlitedb.Issue) *beads.Issue {
 func fromPgIssue(r pgdb.Issue) *beads.Issue {
 	return assemble(issueFields{
 		ID: r.ID, ContentHash: r.ContentHash, Title: r.Title,
-		Description: r.Description, Design: r.Design,
+		Description:        r.Description,
 		AcceptanceCriteria: r.AcceptanceCriteria, Notes: r.Notes,
 		Status: r.Status, Priority: int(r.Priority), Type: r.IssueType,
 		Assignee: r.Assignee, EstimatedMinutes: int(r.EstimatedMinutes),
@@ -52,29 +52,29 @@ func fromPgIssue(r pgdb.Issue) *beads.Issue {
 // issueFields is the union of fields read from either generated Issue type;
 // it lets assemble() be the single point that turns a row into beads.Issue.
 type issueFields struct {
-	ID, ContentHash, Title, Description, Design, AcceptanceCriteria, Notes string
-	Status                                                                 string
-	Priority                                                               int
-	Type                                                                   string
-	Assignee                                                               string
-	EstimatedMinutes                                                       int
-	CreatedAt                                                              time.Time
-	CreatedBy, Owner                                                       string
-	UpdatedAt                                                              time.Time
-	ClosedAt                                                               sql.NullTime
-	ClosedBySession                                                        string
-	ExternalRef, SpecID, Metadata, SourceRepo, SourceSystem, CloseReason   string
-	Sender                                                                 string
-	Ephemeral, Pinned, IsTemplate                                          bool
-	WispType, MolType, RoleType                                            string
-	EventKind, Actor, Target, Payload                                      string
-	StartedAt, DueAt, DeferUntil                                           sql.NullTime
+	ID, ContentHash, Title, Description, AcceptanceCriteria, Notes       string
+	Status                                                               string
+	Priority                                                             int
+	Type                                                                 string
+	Assignee                                                             string
+	EstimatedMinutes                                                     int
+	CreatedAt                                                            time.Time
+	CreatedBy, Owner                                                     string
+	UpdatedAt                                                            time.Time
+	ClosedAt                                                             sql.NullTime
+	ClosedBySession                                                      string
+	ExternalRef, SpecID, Metadata, SourceRepo, SourceSystem, CloseReason string
+	Sender                                                               string
+	Ephemeral, Pinned, IsTemplate                                        bool
+	WispType, MolType, RoleType                                          string
+	EventKind, Actor, Target, Payload                                    string
+	StartedAt, DueAt, DeferUntil                                         sql.NullTime
 }
 
 func assemble(f issueFields) *beads.Issue {
 	return &beads.Issue{
 		ID: f.ID, ContentHash: f.ContentHash, Title: f.Title,
-		Description: f.Description, Design: f.Design,
+		Description:        f.Description,
 		AcceptanceCriteria: f.AcceptanceCriteria, Notes: f.Notes,
 		Status:           beads.Status(f.Status),
 		Priority:         f.Priority,
@@ -111,15 +111,15 @@ type rowScanner interface {
 
 func scanIssue(r rowScanner) (*beads.Issue, error) {
 	var (
-		f                   issueFields
-		ephemeral           int64
-		pinned              int64
-		isTemplate          int64
-		priority            int64
-		estimatedMinutes    int64
+		f                issueFields
+		ephemeral        int64
+		pinned           int64
+		isTemplate       int64
+		priority         int64
+		estimatedMinutes int64
 	)
 	if err := r.Scan(
-		&f.ID, &f.ContentHash, &f.Title, &f.Description, &f.Design,
+		&f.ID, &f.ContentHash, &f.Title, &f.Description,
 		&f.AcceptanceCriteria, &f.Notes,
 		&f.Status, &priority, &f.Type, &f.Assignee, &estimatedMinutes,
 		&f.CreatedAt, &f.CreatedBy, &f.Owner, &f.UpdatedAt,

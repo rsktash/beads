@@ -107,7 +107,7 @@ bd create "later thing"   --defer 2026-06-01T00:00:00Z   # excluded from `ready`
 ## File-based updates
 
 `bd edit <id>` opens the bead in `$EDITOR` as YAML and applies the diff on
-save (title, description, design, acceptance, notes, type, status, priority,
+save (title, description, acceptance, notes, type, status, priority,
 assignee, owner, labels, due, defer, ephemeral). Non-listed fields are
 read-only.
 
@@ -125,7 +125,7 @@ dep add bd-YYYY bd-XXXX blocks
 close bd-ZZZZ wontfix later
 ```
 
-Keys for `create`/`update`: `title, desc, design, accept, notes, status,
+Keys for `create`/`update`: `title, desc, accept, notes, status,
 priority, type, assignee, owner, due, defer, ephemeral`. Strings with spaces
 go in `"double quotes"`. v0.1 runs sequentially: first error aborts; previously
 applied ops in the same batch are NOT rolled back. Atomic transactional mode

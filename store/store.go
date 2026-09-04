@@ -691,7 +691,7 @@ func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
 	case DriverSQLite:
 		return s.sqlite.CreateIssue(ctx, sqlitedb.CreateIssueParams{
 			ID: i.ID, ContentHash: i.ContentHash, Title: i.Title,
-			Description: i.Description, Design: i.Design,
+			Description:        i.Description,
 			AcceptanceCriteria: i.AcceptanceCriteria, Notes: i.Notes,
 			Status: string(i.Status), Priority: int64(i.Priority),
 			IssueType: string(i.Type), Assignee: i.Assignee,
@@ -712,7 +712,7 @@ func (s *Store) insertIssue(ctx context.Context, i *beads.Issue) error {
 	case DriverPostgres:
 		return s.pg.CreateIssue(ctx, pgdb.CreateIssueParams{
 			ID: i.ID, ContentHash: i.ContentHash, Title: i.Title,
-			Description: i.Description, Design: i.Design,
+			Description:        i.Description,
 			AcceptanceCriteria: i.AcceptanceCriteria, Notes: i.Notes,
 			Status: string(i.Status), Priority: int32(i.Priority),
 			IssueType: string(i.Type), Assignee: i.Assignee,
@@ -815,7 +815,6 @@ var ParkDeferUntil = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 type IssueUpdate struct {
 	Title              *string
 	Description        *string
-	Design             *string
 	AcceptanceCriteria *string
 	Notes              *string
 	Type               *beads.IssueType
@@ -844,9 +843,6 @@ func (s *Store) UpdateIssue(ctx context.Context, id string, u IssueUpdate) (*bea
 	}
 	if u.Description != nil {
 		add("description", *u.Description)
-	}
-	if u.Design != nil {
-		add("design", *u.Design)
 	}
 	if u.AcceptanceCriteria != nil {
 		add("acceptance_criteria", *u.AcceptanceCriteria)
