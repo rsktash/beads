@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rsktash/beads/store"
 )
 
 func runSource(t *testing.T, args []string) (string, string, error) {
@@ -103,11 +105,22 @@ func assistantTextRecord(t *testing.T, uuid, text string) string {
 // annotatedRuling makes a ruling carrying a pointer and returns its id.
 func annotatedRuling(t *testing.T, title, sessionID, msgID, toolUseID string) string {
 	t.Helper()
+	return annotatedRulingTranscript(t, title, sessionID, msgID, toolUseID, "")
+}
+
+// annotatedRulingTranscript makes a ruling whose pointer also carries a
+// stored transcript path and returns its id.
+func annotatedRulingTranscript(t *testing.T, title, sessionID, msgID, toolUseID, transcriptPath string) string {
+	t.Helper()
 	_, st := newTempRulingStore(t, "bd")
 	issue := mkIssueForRuling(t, st, title)
 	rID := mkRulingStatement(t, st, issue.ID, "a ruling with provenance")
 	_ = st.Close()
-	if _, _, err := runAnnotate(t, []string{rID, "--session", sessionID, "--msg", msgID, "--tool", toolUseID}); err != nil {
+	args := []string{rID, "--session", sessionID, "--msg", msgID, "--tool", toolUseID}
+	if transcriptPath != "" {
+		args = append(args, "--transcript", transcriptPath)
+	}
+	if _, _, err := runAnnotate(t, args); err != nil {
 		t.Fatalf("annotate: %v", err)
 	}
 	return rID
@@ -160,6 +173,132 @@ func TestSource_MissingTranscript(t *testing.T) {
 	}
 	if !strings.Contains(out, "transcript not on this machine") {
 		t.Fatalf("expected the not-on-this-machine line, got:\n%s", out)
+	}
+}
+
+// writeForeignTranscript plants a transcript under a slug directory that is
+// not the current working directory's slug and returns its path.
+func writeForeignTranscript(t *testing.T, home, sessionID string, lines []string) string {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "projects", "-Users-someone-else-foreign-project")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir foreign slug: %v", err)
+	}
+	path := filepath.Join(dir, sessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write foreign transcript: %v", err)
+	}
+	return path
+}
+
+// TestSource_PrefersStoredTranscriptPath is the F-72 regime: the pointer was
+// written from another project's session, so only the stored path finds the
+// transcript — the cwd-derived slug directory does not even exist.
+func TestSource_PrefersStoredTranscriptPath(t *testing.T) {
+	const sid = "eeeeeeee-1111-2222-3333-444444444444"
+	const toolUse = "toolu_stored"
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	storedPath := writeForeignTranscript(t, home, sid, []string{
+		ownerRecord(t, "u-1", "STORED the sentence from the foreign transcript"),
+		toolUseRecord(t, "u-toolcall", "msg_stored", toolUse),
+	})
+	rID := annotatedRulingTranscript(t, "source prefers stored path", sid, "u-toolcall", toolUse, storedPath)
+
+	out, _, err := runSource(t, []string{rID})
+	if err != nil {
+		t.Fatalf("source: %v", err)
+	}
+	if !strings.Contains(out, "STORED the sentence from the foreign transcript") {
+		t.Fatalf("expected the owner sentence from the stored path, got:\n%s", out)
+	}
+	if !strings.Contains(out, "grep: rg -n 'eeeeeeee' "+storedPath) {
+		t.Fatalf("expected the grep line to name the stored path %s, got:\n%s", storedPath, out)
+	}
+}
+
+// TestSource_FallsBackToCwdWhenStoredMissing: the stored path is gone, but the
+// cwd-derived transcript exists — the fallback keeps today's behavior.
+func TestSource_FallsBackToCwdWhenStoredMissing(t *testing.T) {
+	const sid = "ffffffff-1111-2222-3333-444444444444"
+	const toolUse = "toolu_fallback"
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTranscript(t, home, sid, []string{
+		ownerRecord(t, "u-1", "FALLBACK the sentence from the cwd transcript"),
+		toolUseRecord(t, "u-toolcall", "msg_fallback", toolUse),
+	})
+	rID := annotatedRulingTranscript(t, "source falls back to cwd", sid, "u-toolcall", toolUse,
+		filepath.Join(t.TempDir(), "gone", sid+".jsonl"))
+
+	out, _, err := runSource(t, []string{rID})
+	if err != nil {
+		t.Fatalf("source: %v", err)
+	}
+	if !strings.Contains(out, "FALLBACK the sentence from the cwd transcript") {
+		t.Fatalf("expected the owner sentence from the cwd-derived transcript, got:\n%s", out)
+	}
+}
+
+// TestSource_BothMissing: neither the stored path nor the cwd-derived
+// transcript exists — the not-on-this-machine line, still exit 0.
+func TestSource_BothMissing(t *testing.T) {
+	const sid = "9a9a9a9a-1111-2222-3333-444444444444"
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rID := annotatedRulingTranscript(t, "source both missing", sid, "u-1", "toolu_none",
+		filepath.Join(t.TempDir(), "gone", sid+".jsonl"))
+
+	out, _, err := runSource(t, []string{rID})
+	if err != nil {
+		t.Fatalf("a missing transcript must exit 0, got: %v", err)
+	}
+	if !strings.Contains(out, "transcript not on this machine") {
+		t.Fatalf("expected the not-on-this-machine line, got:\n%s", out)
+	}
+}
+
+// TestResolveTranscript pins the three resolver regimes with one assertion
+// each: stored-exists wins (even over a live cwd transcript), a missing
+// stored path falls back to the cwd-derived one, and both missing resolves
+// to nothing.
+func TestResolveTranscript(t *testing.T) {
+	const sid = "7b7b7b7b-1111-2222-3333-444444444444"
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	storedPath := writeForeignTranscript(t, home, sid, []string{
+		ownerRecord(t, "u-1", "stored"),
+	})
+	cwdPath := writeTranscript(t, home, sid, []string{
+		ownerRecord(t, "u-1", "cwd"),
+	})
+
+	got, ok, err := resolveTranscript(store.ProvenancePointer{SessionID: sid, TranscriptPath: storedPath})
+	if err != nil {
+		t.Fatalf("resolve stored: %v", err)
+	}
+	if !ok || got != storedPath {
+		t.Fatalf("regime stored-exists: expected %q, got %q ok=%v", storedPath, got, ok)
+	}
+
+	got, ok, err = resolveTranscript(store.ProvenancePointer{SessionID: sid, TranscriptPath: filepath.Join(t.TempDir(), "gone.jsonl")})
+	if err != nil {
+		t.Fatalf("resolve fallback: %v", err)
+	}
+	if !ok || got != cwdPath {
+		t.Fatalf("regime stored-missing-cwd-exists: expected %q, got %q ok=%v", cwdPath, got, ok)
+	}
+
+	_, ok, err = resolveTranscript(store.ProvenancePointer{SessionID: "8c8c8c8c-1111-2222-3333-444444444444", TranscriptPath: filepath.Join(t.TempDir(), "gone.jsonl")})
+	if err != nil {
+		t.Fatalf("resolve both missing: %v", err)
+	}
+	if ok {
+		t.Fatal("regime both-missing: expected no resolution")
 	}
 }
 

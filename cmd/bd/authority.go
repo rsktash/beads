@@ -710,11 +710,11 @@ func briefSourceLine(cc *cmdCtx, id string) string {
 	if err != nil || p.SessionID == "" {
 		return "source: none recorded"
 	}
-	path, err := transcriptPath(p.SessionID)
+	_, ok, err := resolveTranscript(p)
 	if err != nil {
 		return "source: session " + p.SessionID
 	}
-	if _, err := os.Stat(path); err != nil {
+	if !ok {
 		return fmt.Sprintf("source: session %s — transcript not on this machine", p.SessionID)
 	}
 	return fmt.Sprintf("source: session %s — bd source %s", p.SessionID, id)

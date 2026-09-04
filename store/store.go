@@ -1578,12 +1578,12 @@ func isUniqueViolation(err error) bool {
 }
 
 // AnnotateComment writes the provenance pointer onto a comment, overwriting
-// whatever was there. The three columns are written by this raw UPDATE and
+// whatever was there. The pointer columns are written by this raw UPDATE and
 // never by the sqlc-generated comment writers, which do not know them.
 // Returns ErrNotFound when no comment carries the id.
-func (s *Store) AnnotateComment(ctx context.Context, id, sessionID, msgID, toolUseID string) error {
-	q := s.rebind(`UPDATE comments SET session_id = ?, msg_id = ?, tool_use_id = ? WHERE id = ?`)
-	res, err := s.db.ExecContext(ctx, q, sessionID, msgID, toolUseID, id)
+func (s *Store) AnnotateComment(ctx context.Context, id, sessionID, msgID, toolUseID, transcriptPath string) error {
+	q := s.rebind(`UPDATE comments SET session_id = ?, msg_id = ?, tool_use_id = ?, transcript_path = ? WHERE id = ?`)
+	res, err := s.db.ExecContext(ctx, q, sessionID, msgID, toolUseID, transcriptPath, id)
 	if err != nil {
 		return err
 	}
@@ -1596,9 +1596,9 @@ func (s *Store) AnnotateComment(ctx context.Context, id, sessionID, msgID, toolU
 
 // CommentPointer reads the provenance pointer off a comment.
 func (s *Store) CommentPointer(ctx context.Context, id string) (ProvenancePointer, error) {
-	q := s.rebind(`SELECT session_id, msg_id, tool_use_id FROM comments WHERE id = ?`)
+	q := s.rebind(`SELECT session_id, msg_id, tool_use_id, transcript_path FROM comments WHERE id = ?`)
 	var p ProvenancePointer
-	err := s.db.QueryRowContext(ctx, q, id).Scan(&p.SessionID, &p.MsgID, &p.ToolUseID)
+	err := s.db.QueryRowContext(ctx, q, id).Scan(&p.SessionID, &p.MsgID, &p.ToolUseID, &p.TranscriptPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}

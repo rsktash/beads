@@ -161,6 +161,26 @@ func transcriptPath(sessionID string) (string, error) {
 	return filepath.Join(home, ".claude", "projects", transcriptSlug(cwd), sessionID+".jsonl"), nil
 }
 
+// resolveTranscript picks the transcript file behind a pointer: the stored
+// path when it is set and exists, else the cwd-derived path when it exists,
+// else none. A pointer written from another project's session carries the
+// path that actually exists; an old pointer falls back to the cwd guess.
+func resolveTranscript(p store.ProvenancePointer) (string, bool, error) {
+	if p.TranscriptPath != "" {
+		if _, err := os.Stat(p.TranscriptPath); err == nil {
+			return p.TranscriptPath, true, nil
+		}
+	}
+	cwdPath, err := transcriptPath(p.SessionID)
+	if err != nil {
+		return "", false, err
+	}
+	if _, err := os.Stat(cwdPath); err == nil {
+		return cwdPath, true, nil
+	}
+	return "", false, nil
+}
+
 // sourceHit is what the scan recovers: the owner sentence before the tool call
 // and the timestamp of the call itself.
 type sourceHit struct {
@@ -284,9 +304,13 @@ func writeRecordedSource(out io.Writer, p store.ProvenancePointer) error {
 		fmt.Fprintln(out, "source: none recorded")
 		return nil
 	}
-	path, err := transcriptPath(p.SessionID)
+	path, ok, err := resolveTranscript(p)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		fmt.Fprintf(out, "source: session %s — transcript not on this machine\n", p.SessionID)
+		return nil
 	}
 	f, err := os.Open(path)
 	if err != nil {

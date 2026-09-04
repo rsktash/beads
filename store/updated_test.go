@@ -234,7 +234,7 @@ func TestUpdated_AnnotateDoesNotBump(t *testing.T) {
 	}
 	time.Sleep(2 * time.Millisecond)
 
-	if err := st.AnnotateStatement(ctx, r.ID, "sess-1", "msg-1", "tool-1"); err != nil {
+	if err := st.AnnotateStatement(ctx, r.ID, "sess-1", "msg-1", "tool-1", ""); err != nil {
 		t.Fatalf("annotate: %v", err)
 	}
 
