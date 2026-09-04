@@ -267,7 +267,19 @@ func (s *Store) migrationCachePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	h := sha256.Sum256([]byte(s.dsn))
+	key := s.dsn
+	if s.driver == DriverSQLite {
+		_, path, err := parseDSN(s.dsn)
+		if err != nil {
+			return "", err
+		}
+		identity, ok := sqliteFileIdentity(path)
+		if !ok {
+			return "", errors.New("sqlite file identity unavailable")
+		}
+		key += "\n" + identity
+	}
+	h := sha256.Sum256([]byte(key))
 	return filepath.Join(base, "bd", "migrations", hex.EncodeToString(h[:])), nil
 }
 
