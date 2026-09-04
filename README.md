@@ -78,6 +78,10 @@ bd update $ID --claim                   # set in_progress + assign you
 bd close $ID -r "shipped"
 ```
 
+`bd init` refuses when the current directory already has a `.bd/config`, so it
+cannot silently repoint an existing project at another database; pass `--force`
+to overwrite it deliberately.
+
 Postgres instead of SQLite:
 
 ```sh

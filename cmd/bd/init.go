@@ -15,6 +15,7 @@ import (
 
 func newInitCmd() *cobra.Command {
 	var dsn, prefix, idMode string
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a bd project (writes .bd/config + seeds DB config)",
@@ -25,7 +26,10 @@ table:
   issue_prefix    — required; the per-project bead-id prefix (e.g. "bd", "yuklar")
   issue_id_mode   — "hash" (default) or "counter"
 
-The DSN may point at a local sqlite file or a remote postgres server.`,
+The DSN may point at a local sqlite file or a remote postgres server.
+
+If .bd/config already exists in the current directory, init refuses and changes
+nothing; pass --force to overwrite it.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if prefix == "" {
 				prefix = os.Getenv(config.EnvPrefix)
@@ -38,7 +42,7 @@ The DSN may point at a local sqlite file or a remote postgres server.`,
 			// live in different schemas of the same database. SQLite
 			// (one-file-per-project) is unchanged.
 			dsn = withSearchPath(dsn, prefix)
-			cfg, err := config.Init(dsn)
+			cfg, err := config.Init(dsn, force)
 			if err != nil {
 				return err
 			}
@@ -70,6 +74,7 @@ The DSN may point at a local sqlite file or a remote postgres server.`,
 	cmd.Flags().StringVar(&dsn, "db", "", "DSN. Default: sqlite at .bd/bd.db. Examples:\n  --db postgres://user@host/tracker?sslmode=disable   (search_path defaults to --prefix)\n  --db sqlite:/tmp/test.db")
 	cmd.Flags().StringVar(&prefix, "prefix", "", "id prefix and postgres schema name (REQUIRED, also via $BD_PREFIX)")
 	cmd.Flags().StringVar(&idMode, "id-mode", "", "id allocation mode: hash (default) or counter")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing .bd/config in this directory")
 	return cmd
 }
 

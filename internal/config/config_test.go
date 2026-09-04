@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -268,5 +269,111 @@ func TestFindBeadsDirStillHonoursABareBeadsDirWhenNothingElseExists(t *testing.T
 	}
 	if got != bare {
 		t.Fatalf("got %q, want %q", got, bare)
+	}
+}
+
+func TestInitWritesConfigInAFreshDirectory(t *testing.T) {
+	t.Setenv(EnvDBPassword, "")
+	root := mustEvalSymlinks(t, t.TempDir())
+	chdir(t, root)
+
+	cfg, err := Init("sqlite:"+filepath.Join(root, "a.db"), false)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	want := filepath.Join(root, dirName)
+	if cfg.BeadDir != want {
+		t.Fatalf("BeadDir = %q, want %q", cfg.BeadDir, want)
+	}
+	body, err := os.ReadFile(filepath.Join(want, configName))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(body), "db=sqlite:"+filepath.Join(root, "a.db")) {
+		t.Fatalf("config does not name the DSN:\n%s", body)
+	}
+}
+
+// The regression this guard exists for: a second init overwrote the shared config
+// and repointed every other client of that directory at a different database.
+func TestInitRefusesAnExistingConfig(t *testing.T) {
+	t.Setenv(EnvDBPassword, "")
+	root := mustEvalSymlinks(t, t.TempDir())
+	chdir(t, root)
+	if _, err := Init("sqlite:"+filepath.Join(root, "a.db"), false); err != nil {
+		t.Fatalf("first Init: %v", err)
+	}
+	cfgPath := filepath.Join(root, dirName, configName)
+	before, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	cfg, err := Init("sqlite:"+filepath.Join(root, "b.db"), false)
+	if err == nil {
+		t.Fatalf("second Init succeeded, want refusal (cfg=%+v)", cfg)
+	}
+	if !strings.Contains(err.Error(), cfgPath) {
+		t.Errorf("error does not name the existing file: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Errorf("error does not name --force: %v", err)
+	}
+	after, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config after refusal: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("config changed after refusal:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+func TestInitForceOverwritesAnExistingConfig(t *testing.T) {
+	t.Setenv(EnvDBPassword, "")
+	root := mustEvalSymlinks(t, t.TempDir())
+	chdir(t, root)
+	if _, err := Init("sqlite:"+filepath.Join(root, "a.db"), false); err != nil {
+		t.Fatalf("first Init: %v", err)
+	}
+
+	if _, err := Init("sqlite:"+filepath.Join(root, "b.db"), true); err != nil {
+		t.Fatalf("forced Init: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, dirName, configName))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(body), "db=sqlite:"+filepath.Join(root, "b.db")) {
+		t.Fatalf("config was not overwritten:\n%s", body)
+	}
+	if strings.Contains(string(body), "a.db") {
+		t.Fatalf("config still names the old DSN:\n%s", body)
+	}
+}
+
+// Only this directory's own config blocks an init; one inherited from further up
+// the tree belongs to another directory.
+func TestInitIgnoresAConfigFoundOnlyByTheUpwardWalk(t *testing.T) {
+	t.Setenv(EnvDBPassword, "")
+	root := mustEvalSymlinks(t, t.TempDir())
+	chdir(t, root)
+	if _, err := Init("sqlite:"+filepath.Join(root, "a.db"), false); err != nil {
+		t.Fatalf("root Init: %v", err)
+	}
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, sub)
+
+	if _, err := Init("sqlite:"+filepath.Join(sub, "b.db"), false); err != nil {
+		t.Fatalf("subdirectory Init: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(sub, dirName, configName))
+	if err != nil {
+		t.Fatalf("read subdirectory config: %v", err)
+	}
+	if !strings.Contains(string(body), "db=sqlite:"+filepath.Join(sub, "b.db")) {
+		t.Fatalf("subdirectory config does not name its own DSN:\n%s", body)
 	}
 }

@@ -401,14 +401,28 @@ func readDSNFromFile(beadsDir string) (string, error) {
 // If the supplied DSN contains a password, it is stripped before writing and
 // the caller is informed so they can set BD_DB_PASSWORD instead.
 //
+// An existing <cwd>/.bd/config is refused unless force is set: overwriting one
+// silently repoints every other client of that shared file — including other
+// processes already running — at a different database. The check looks ONLY at
+// cwd; a config resolved from further up the tree or from the main worktree is
+// not this directory's file and does not block an init here.
+//
 // Init does NOT seed the in-DB config table — that is the caller's job, after
 // opening the store.
-func Init(dsn string) (*Config, error) {
+func Init(dsn string, force bool) (*Config, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
 	dir := filepath.Join(cwd, dirName)
+	cfgPath := filepath.Join(dir, configName)
+	if !force {
+		if _, err := os.Stat(cfgPath); err == nil {
+			return nil, fmt.Errorf("%s already exists — refusing to overwrite it; pass --force to replace it", cfgPath)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -417,7 +431,6 @@ func Init(dsn string) (*Config, error) {
 	}
 	sanitised, hadPW := stripPassword(dsn)
 
-	cfgPath := filepath.Join(dir, configName)
 	body := "# bd config — only the DSN lives here.\n" +
 		"# Project settings (prefix, id mode, custom statuses) live in the DB `config` table.\n" +
 		"# Credentials must NOT be embedded here. Set BD_DB_PASSWORD in the env or in .bd/.env.\n" +
