@@ -23,6 +23,7 @@ state, not free-form notes.
 ## Daily flow
 
 - ` + "`bd ready`" + ` — what's available to work on (no open blockers, deferred, ephemeral, or open questions).
+- ` + "`bd plan show <plan>`" + ` — the execution plan: every lane with its cursor, holder, last handoff and the graph-computed readiness of the next item.
 - ` + "`bd show <id>`" + ` — execution contract for the bead (see Reading). Long descriptions print an
   outline; pass ` + "`--full`" + ` for the body or ` + "`--section <slug>`" + ` for one heading.
 - ` + "`bd update <id> --status=in_progress --assignee \"<name> / <model>\"`" + ` — claim with attribution (never ` + "`--claim`" + `, which drops the model).
