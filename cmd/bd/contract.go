@@ -83,10 +83,23 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 		fmt.Fprintln(w, "\nFINDINGS")
 		for _, f := range cv.Findings {
 			base := fmt.Sprintf("  %s  %s  %s  %s", f.ID, f.CreatedAt.Format("2006-01-02"), authorColumn(f.FiledBy), f.Text)
+			if f.SourceIssueID != nil && strings.TrimSpace(*f.SourceIssueID) != "" {
+				base += fmt.Sprintf("  from: %s", *f.SourceIssueID)
+			}
 			if strings.TrimSpace(f.Evidence) != "" {
 				base += fmt.Sprintf("  evidence: %s", f.Evidence)
 			}
 			fmt.Fprintln(w, base)
+		}
+	}
+	if len(cv.SourcedFindings) > 0 {
+		fmt.Fprintln(w, "\nFINDINGS FILED FROM HERE")
+		for _, f := range cv.SourcedFindings {
+			bead := ""
+			if f.IssueID != nil {
+				bead = *f.IssueID
+			}
+			fmt.Fprintf(w, "  %s  %s  %s  [%s]  %s\n", f.ID, f.CreatedAt.Format("2006-01-02"), authorColumn(f.FiledBy), bead, f.Text)
 		}
 	}
 

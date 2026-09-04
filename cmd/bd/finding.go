@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/rsktash/beads"
+	"github.com/rsktash/beads/store"
 )
 
 func newFindingCmd() *cobra.Command {
@@ -22,6 +24,7 @@ func newFindingCmd() *cobra.Command {
 func newFindingAddCmd() *cobra.Command {
 	var evidence string
 	var topic string
+	var source string
 	cmd := &cobra.Command{
 		Use:   "add <issue-id> <text> --topic <slug>",
 		Short: "File a finding (open to all actors)",
@@ -29,7 +32,11 @@ func newFindingAddCmd() *cobra.Command {
 
 --topic is required: a finding nobody can find under the topic it bears on is a
 finding nobody reads. Without it the command prints the catalogue for the
-bead's areas and refuses.`,
+bead's areas and refuses.
+
+Optional --source <issue-id> records the bead the filer was working when the
+finding was hit; it renders as from: on the finding's line and in a FINDINGS
+FILED FROM HERE section on the source bead's own show.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			identity, _ := resolveActor()
@@ -47,6 +54,18 @@ bead's areas and refuses.`,
 				return err
 			}
 			defer cc.store.Close()
+			sourceID := strings.TrimSpace(source)
+			if sourceID != "" {
+				if sourceID == issueID {
+					return fmt.Errorf("--source names the bead the finding is already on")
+				}
+				if _, err := cc.store.GetIssue(cc.ctx, sourceID); err != nil {
+					if errors.Is(err, store.ErrNotFound) {
+						return fmt.Errorf("--source %s: no such issue", sourceID)
+					}
+					return err
+				}
+			}
 			slug, workspace, concern, err := resolveStatementTopic(cc, cmd.ErrOrStderr(), issueID, topic)
 			if err != nil {
 				return err
@@ -63,6 +82,9 @@ bead's areas and refuses.`,
 				Workspace: workspace,
 				Concern:   concern,
 			}
+			if sourceID != "" {
+				st.SourceIssueID = &sourceID
+			}
 			if err := cc.store.CreateStatement(cc.ctx, st); err != nil {
 				return err
 			}
@@ -75,5 +97,6 @@ bead's areas and refuses.`,
 	}
 	cmd.Flags().StringVar(&evidence, "evidence", "", "evidence references (verbatim string)")
 	cmd.Flags().StringVar(&topic, "topic", "", "topic slug this finding belongs to (required; [a-z0-9-]{2,48})")
+	cmd.Flags().StringVar(&source, "source", "", "bead the filer was working when the finding was hit (optional; renders as from:)")
 	return cmd
 }

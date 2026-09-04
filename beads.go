@@ -191,6 +191,9 @@ type Statement struct {
 	// BindsID names a second bead this ruling is explicitly attached to
 	// (bd ruling add --binds), in addition to the bead it is filed on.
 	BindsID *string `db:"binds_id" json:"binds_id,omitempty"`
+	// SourceIssueID names the bead the filer was working when the finding
+	// was hit (bd finding add --source); it never inherits.
+	SourceIssueID *string `db:"source_issue_id" json:"source_issue_id,omitempty"`
 	// Verbatim is the owner's verbatim sentence backing a ruling. It is
 	// stored untouched and never renders in the default headline.
 	Verbatim string `db:"verbatim" json:"verbatim,omitempty"`

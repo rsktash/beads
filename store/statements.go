@@ -32,6 +32,10 @@ type ContractView struct {
 	// say whether a ruling, a finding or another question settled the question
 	// without resolving ids itself.
 	AnswerKinds map[string]string `json:"answer_kinds,omitempty"`
+	// SourcedFindings holds the active findings whose source_issue_id names
+	// this bead, newest first. It is a direct query, never an inheritance
+	// arm: the back-link does not inherit.
+	SourcedFindings []beads.Statement `json:"sourced_findings,omitempty"`
 }
 
 // kindPrefix maps statement kind to its citable prefix.
@@ -104,10 +108,10 @@ func authorFromFiledBy(filedBy string) string {
 // statementSelectColumns is the shared column list for statements reads
 // (GetStatement, ListStatements), kept in lockstep with scanStatementRow and
 // scanStatementRows below.
-const statementSelectColumns = `id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id`
+const statementSelectColumns = `id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id, source_issue_id`
 
 // insertStatementSQL is the column list for statements inserts.
-const insertStatementSQL = `INSERT INTO statements (id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const insertStatementSQL = `INSERT INTO statements (id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id, source_issue_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func insertStatementExec(ctx context.Context, execer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -139,6 +143,7 @@ func insertStatementExec(ctx context.Context, execer interface {
 		st.RetireNote,
 		nullTimePtr(st.ChangedAt),
 		nullStrPtr(st.BindsID),
+		nullStrPtr(st.SourceIssueID),
 	)
 	return err
 }
@@ -782,8 +787,10 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 	// The view carries no verbatim, law or rationale column (rulings are the
 	// only kind that uses them), so join back to statements for them rather
 	// than widening the view. law and rationale are what makes a doctrine
-	// render as its law in the contract's ACTIVE RULINGS block.
-	q := s.rebind(`SELECT rs.statement_id, rs.kind, rs.text, rs.created_at, rs.filed_by, rs.evidence, rs.origin_kind, rs.origin_issue_id, rs.depth, stmt.verbatim, stmt.law, stmt.rationale
+	// render as its law in the contract's ACTIVE RULINGS block. The same join
+	// carries source_issue_id for the FINDINGS block's from: segment — the
+	// back-link itself is never an inheritance arm (see listSourcedFindings).
+	q := s.rebind(`SELECT rs.statement_id, rs.kind, rs.text, rs.created_at, rs.filed_by, rs.evidence, rs.origin_kind, rs.origin_issue_id, rs.depth, stmt.verbatim, stmt.law, stmt.rationale, stmt.source_issue_id
 		FROM resolved_statements rs
 		JOIN statements stmt ON stmt.id = rs.statement_id
 		WHERE rs.issue_id = ?
@@ -802,9 +809,9 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 	for rows.Next() {
 		var statementID, kind, text, filedBy, evidence, originKind, verbatim, law, rationale string
 		var createdAt time.Time
-		var originIssueID sql.NullString
+		var originIssueID, sourceIssueID sql.NullString
 		var depth sql.NullInt64
-		if err := rows.Scan(&statementID, &kind, &text, &createdAt, &filedBy, &evidence, &originKind, &originIssueID, &depth, &verbatim, &law, &rationale); err != nil {
+		if err := rows.Scan(&statementID, &kind, &text, &createdAt, &filedBy, &evidence, &originKind, &originIssueID, &depth, &verbatim, &law, &rationale, &sourceIssueID); err != nil {
 			return ContractView{}, err
 		}
 		if seen[statementID] {
@@ -812,17 +819,18 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 		}
 		seen[statementID] = true
 		st := beads.Statement{
-			ID:        statementID,
-			Kind:      kind,
-			Text:      text,
-			CreatedAt: createdAt,
-			FiledBy:   filedBy,
-			Evidence:  evidence,
-			Status:    "active",
-			Scope:     "inherit",
-			Verbatim:  verbatim,
-			Law:       law,
-			Rationale: rationale,
+			ID:            statementID,
+			Kind:          kind,
+			Text:          text,
+			CreatedAt:     createdAt,
+			FiledBy:       filedBy,
+			Evidence:      evidence,
+			Status:        "active",
+			Scope:         "inherit",
+			Verbatim:      verbatim,
+			Law:           law,
+			Rationale:     rationale,
+			SourceIssueID: nullStringToPtr(sourceIssueID),
 		}
 		// Map view's origin to Statement.IssueID so existing renderer keeps its
 		// bracket logic: self -> own id (no bracket), epic/blocks/binds ->
@@ -888,13 +896,39 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 		}
 		answerKinds[*q.AnsweredBy] = a.Kind
 	}
+	sourced, err := s.listSourcedFindings(ctx, issueID)
+	if err != nil {
+		return ContractView{}, err
+	}
 	return ContractView{
 		Rulings:         rulings,
 		Questions:       questions,
 		Findings:        findings,
 		ClosedQuestions: closed,
 		AnswerKinds:     answerKinds,
+		SourcedFindings: sourced,
 	}, nil
+}
+
+// listSourcedFindings is the back-link read: the active findings whose
+// source_issue_id names this bead, newest first. Deliberately not part of
+// resolved_statements — the back-link never inherits.
+func (s *Store) listSourcedFindings(ctx context.Context, issueID string) ([]beads.Statement, error) {
+	q := s.rebind(`SELECT ` + statementSelectColumns + ` FROM statements WHERE source_issue_id = ? AND kind = 'finding' AND status = 'active' ORDER BY created_at DESC, id DESC`)
+	rows, err := s.db.QueryContext(ctx, q, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []beads.Statement
+	for rows.Next() {
+		st, err := scanStatementRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *st)
+	}
+	return out, rows.Err()
 }
 
 func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
@@ -904,10 +938,11 @@ func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
 		sessionID, msgID, toolUseID, retireNote                     string
 		createdAt                                                   time.Time
 		nsIssue, nsSupersedes, nsAnswered, nsSource, nsBinds        sql.NullString
+		nsSourceIssue                                               sql.NullString
 		ntChanged                                                   sql.NullTime
 	)
 	if err := row.Scan(&id, &kind, &nsIssue, &text, &createdAt, &filedBy, &status, &scope, &nsSupersedes, &nsAnswered, &nsSource, &evidence,
-		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds); err != nil {
+		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds, &nsSourceIssue); err != nil {
 		return nil, err
 	}
 	return &beads.Statement{
@@ -936,6 +971,7 @@ func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
 		RetireNote:      retireNote,
 		ChangedAt:       nullTimeToPtr(ntChanged),
 		BindsID:         nullStringToPtr(nsBinds),
+		SourceIssueID:   nullStringToPtr(nsSourceIssue),
 	}, nil
 }
 
@@ -946,10 +982,11 @@ func scanStatementRows(rows *sql.Rows) (*beads.Statement, error) {
 		sessionID, msgID, toolUseID, retireNote                     string
 		createdAt                                                   time.Time
 		nsIssue, nsSupersedes, nsAnswered, nsSource, nsBinds        sql.NullString
+		nsSourceIssue                                               sql.NullString
 		ntChanged                                                   sql.NullTime
 	)
 	if err := rows.Scan(&id, &kind, &nsIssue, &text, &createdAt, &filedBy, &status, &scope, &nsSupersedes, &nsAnswered, &nsSource, &evidence,
-		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds); err != nil {
+		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds, &nsSourceIssue); err != nil {
 		return nil, err
 	}
 	return &beads.Statement{
@@ -978,6 +1015,7 @@ func scanStatementRows(rows *sql.Rows) (*beads.Statement, error) {
 		RetireNote:      retireNote,
 		ChangedAt:       nullTimeToPtr(ntChanged),
 		BindsID:         nullStringToPtr(nsBinds),
+		SourceIssueID:   nullStringToPtr(nsSourceIssue),
 	}, nil
 }
 

@@ -47,7 +47,7 @@ state, not free-form notes.
 
 ## Reading (token-aware)
 
-- ` + "`bd show <id>`" + ` renders the execution contract in this order: ` + "`CONTRACT`" + `, ` + "`ACTIVE RULINGS — MUST OBEY`" + `, ` + "`OPEN QUESTIONS — EXECUTION BLOCKERS`" + `, ` + "`CLOSED QUESTIONS — NO LONGER BLOCKING`" + `, ` + "`FINDINGS`" + `, ` + "`BASE TEXT`" + `, ` + "`DEPENDENCIES`" + `, ` + "`NOTES / UNTYPED HISTORY`" + `.
+- ` + "`bd show <id>`" + ` renders the execution contract in this order: ` + "`CONTRACT`" + `, ` + "`ACTIVE RULINGS — MUST OBEY`" + `, ` + "`OPEN QUESTIONS — EXECUTION BLOCKERS`" + `, ` + "`CLOSED QUESTIONS — NO LONGER BLOCKING`" + `, ` + "`FINDINGS`" + `, ` + "`FINDINGS FILED FROM HERE`" + `, ` + "`BASE TEXT`" + `, ` + "`DEPENDENCIES`" + `, ` + "`NOTES / UNTYPED HISTORY`" + `.
   Long descriptions print an outline; pass ` + "`--full`" + ` for the body or ` + "`--section <slug>`" + ` for one heading.
 - ` + "`bd get <id> <field>`" + ` — single field, raw, no jq. ` + "`bd get <id> fields`" + ` lists names.
 - ` + "`bd show <id> --full`" + ` — full description body (also ` + "`--head N`" + `, ` + "`--tail N`" + `, ` + "`--lines START-END`" + `).
