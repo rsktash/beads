@@ -68,6 +68,7 @@ func newRoot() *cobra.Command {
 		newStatementsCmd(),
 		newAnnotateCmd(),
 		newSourceCmd(),
+		newPlanCmd(),
 	)
 	return root
 }
