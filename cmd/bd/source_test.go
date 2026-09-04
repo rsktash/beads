@@ -218,6 +218,52 @@ func ownerQuote(t *testing.T, out string) string {
 	return ""
 }
 
+// attachmentRecord is a harness record of an unfamiliar type, carrying no
+// message at all — the kind the ring must never mistake for owner speech.
+func attachmentRecord(t *testing.T, uuid string) string {
+	return jsonLine(t, map[string]any{
+		"type": "attachment", "uuid": uuid, "timestamp": "2026-09-02T22:14:05.000Z",
+	})
+}
+
+func TestSource_SurvivesHarnessRecordsBetweenOwnerAndCall(t *testing.T) {
+	const sid = "dddddddd-1111-2222-3333-444444444444"
+	const toolUse = "toolu_survives"
+	rID := annotatedRuling(t, "source survives harness records", sid, "u-toolcall", toolUse)
+
+	lines := []string{ownerRecord(t, "u-owner", "TARGET the owner sentence before the harness noise")}
+	for i := 0; i < 16; i++ {
+		uuid := "u-harness-" + string(rune('a'+i))
+		switch i % 4 {
+		case 0, 1:
+			lines = append(lines, assistantTextRecord(t, uuid, "assistant chatter"))
+		case 2:
+			lines = append(lines, toolResultRecord(t, uuid, "toolu_unrelated", "some tool result body"))
+		case 3:
+			lines = append(lines, attachmentRecord(t, uuid))
+		}
+	}
+	lines = append(lines,
+		toolUseRecord(t, "u-toolcall", "msg_01call", toolUse),
+		toolResultRecord(t, "u-result", toolUse, "the tool result body"),
+	)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTranscript(t, home, sid, lines)
+
+	out, _, err := runSource(t, []string{rID})
+	if err != nil {
+		t.Fatalf("source: %v", err)
+	}
+	if strings.Contains(out, "no owner message") {
+		t.Fatalf("expected the owner sentence to survive 16 harness records, got:\n%s", out)
+	}
+	if !strings.Contains(out, "TARGET the owner sentence before the harness noise") {
+		t.Fatalf("expected the owner sentence, got:\n%s", out)
+	}
+}
+
 func TestSource_NeverPrintsWholeFile(t *testing.T) {
 	const sid = "cccccccc-1111-2222-3333-444444444444"
 	const toolUse = "toolu_bulk"

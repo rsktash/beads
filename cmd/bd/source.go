@@ -174,8 +174,9 @@ func scanTranscript(r io.Reader, p store.ProvenancePointer) sourceHit {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), maxTranscriptLine)
 
-	// ring holds the last transcriptNeighbours records seen, oldest first, as
-	// already-truncated owner text ("" when the record is not owner speech).
+	// ring holds the last transcriptNeighbours owner candidates seen, oldest
+	// first, as already-truncated owner text. A record that is not owner
+	// speech is never pushed, so it never evicts one.
 	ring := make([]string, 0, transcriptNeighbours)
 	push := func(s string) {
 		if len(ring) == transcriptNeighbours {
@@ -214,8 +215,6 @@ func scanTranscript(r io.Reader, p store.ProvenancePointer) sourceHit {
 		}
 		if s, ok := rec.ownerSaid(); ok {
 			push(truncateQuote(s))
-		} else {
-			push("")
 		}
 	}
 	return fallback
