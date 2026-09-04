@@ -75,8 +75,8 @@ func TestMigrationIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus second: %v", err)
 	}
-	if len(status) != 6 {
-		t.Fatalf("expected 6 after second open, got %d", len(status))
+	if len(status) != 7 {
+		t.Fatalf("expected 7 after second open, got %d", len(status))
 	}
 }
 
