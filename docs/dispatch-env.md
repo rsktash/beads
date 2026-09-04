@@ -15,7 +15,7 @@ facts live in the bead; this file never restates a contract.
 - Executors: `export BD_ACTOR=executor` before any bd write. `bd workfile <id>` writes the body to `.bd/.scratch/<id>.md` and prints the header (rulings, findings, sections).
 - Never pipe a bd read into `head`, `tail`, `cut` or `grep`; read the whole block, `--section <slug>`, or `--json`.
 - Scratch files go in `.bd/.scratch/` only.
-- Smoke-testing a built `bd` binary: pass `--db /tmp/<task>-<fresh-name>.sqlite` on the command line for every invocation. Use a fresh file name for each smoke-test run; never delete and recreate a database at the same path, and never rely on `BD_DB`. The first invocation on a fresh file must be `./bd init --prefix <p> --db /tmp/<task>-<fresh-name>.sqlite`. A bare run resolves the DSN from the cwd's `.bd/config` and writes into a real shared tracker; on 2026-09-04 one such run left junk beads in the zanjir tracker.
+- Smoke-testing a built `bd` binary: pass `--db /tmp/<task>-<fresh-name>.sqlite` on the command line for every invocation. Use a fresh file name for each smoke-test run; never delete and recreate a database at the same path, and never rely on `BD_DB`. The first invocation on a fresh file must be `./bd init --prefix <p> --db /tmp/<task>-<fresh-name>.sqlite`, run from an EMPTY scratch directory outside any repository (for example `mkdir -p /tmp/<task>-smoke && cd /tmp/<task>-smoke`): `bd init` writes `.bd/config` into the current directory, and running it inside a worktree repoints that worktree at the smoke database. A bare run resolves the DSN from the cwd's `.bd/config` and writes into a real shared tracker; on 2026-09-04 one such run left junk beads in the zanjir tracker.
 
 ## Tests and gate
 
