@@ -280,24 +280,32 @@ func (s *Store) fillAreaCounts(ctx context.Context, as Areas) error {
 
 	topics := map[string]int{}
 	for kind, col := range map[string]string{AreaWorkspace: "workspace", AreaConcern: "concern"} {
-		q := s.rebind(fmt.Sprintf(`SELECT %s, COUNT(DISTINCT topic) FROM statements WHERE topic != '' AND %s != '' GROUP BY %s`, col, col, col))
+		q := s.rebind(fmt.Sprintf(`SELECT %s, topic FROM statements WHERE topic != '' AND %s != ''`, col, col))
 		trows, err := s.db.QueryContext(ctx, q)
 		if err != nil {
 			return err
 		}
+		distinct := map[string]map[string]struct{}{}
 		for trows.Next() {
-			var name string
-			var n int
-			if err := trows.Scan(&name, &n); err != nil {
+			var names, topic string
+			if err := trows.Scan(&names, &topic); err != nil {
 				trows.Close()
 				return err
 			}
-			topics[kind+"\x00"+name] = n
+			for _, name := range splitConcerns(names) {
+				if distinct[name] == nil {
+					distinct[name] = map[string]struct{}{}
+				}
+				distinct[name][topic] = struct{}{}
+			}
 		}
 		err = trows.Err()
 		trows.Close()
 		if err != nil {
 			return err
+		}
+		for name, topicSet := range distinct {
+			topics[kind+"\x00"+name] = len(topicSet)
 		}
 	}
 
@@ -371,8 +379,7 @@ func (s *Store) RenameArea(ctx context.Context, kind, oldName, newName string) e
 		if n == 0 {
 			return fmt.Errorf("%s %q: %w", kind, oldName, ErrNotFound)
 		}
-		_, err = tx.ExecContext(ctx, s.rebind(fmt.Sprintf(`UPDATE statements SET %s = ? WHERE %s = ?`, col, col)), newName, oldName)
-		return err
+		return s.rewriteStatementAreaMembership(ctx, tx, col, oldName, newName)
 	})
 }
 
@@ -409,9 +416,59 @@ func (s *Store) MergeAreas(ctx context.Context, kind, from, into string) error {
 		if n == 0 {
 			return fmt.Errorf("%s %q: %w", kind, from, ErrNotFound)
 		}
-		_, err = tx.ExecContext(ctx, s.rebind(fmt.Sprintf(`UPDATE statements SET %s = ? WHERE %s = ?`, col, col)), into, from)
-		return err
+		return s.rewriteStatementAreaMembership(ctx, tx, col, from, into)
 	})
+}
+
+func (s *Store) rewriteStatementAreaMembership(ctx context.Context, tx *sql.Tx, col, oldName, newName string) error {
+	q := s.rebind(fmt.Sprintf(`SELECT id, %s FROM statements WHERE %s != ''`, col, col))
+	rows, err := tx.QueryContext(ctx, q)
+	if err != nil {
+		return err
+	}
+	type statementAreaUpdate struct {
+		id    string
+		value string
+	}
+	var updates []statementAreaUpdate
+	for rows.Next() {
+		var id, value string
+		if err := rows.Scan(&id, &value); err != nil {
+			rows.Close()
+			return err
+		}
+		areas := splitConcerns(value)
+		changed := false
+		seen := make(map[string]struct{}, len(areas))
+		rewritten := make([]string, 0, len(areas))
+		for _, name := range areas {
+			if name == oldName {
+				name = newName
+				changed = true
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			rewritten = append(rewritten, name)
+		}
+		if changed {
+			updates = append(updates, statementAreaUpdate{id: id, value: strings.Join(rewritten, ",")})
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+
+	q = s.rebind(fmt.Sprintf(`UPDATE statements SET %s = ? WHERE id = ?`, col))
+	for _, update := range updates {
+		if _, err := tx.ExecContext(ctx, q, update.value, update.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) inAreaTx(ctx context.Context, fn func(tx *sql.Tx) error) error {

@@ -227,14 +227,26 @@ func TestAreas_AddWorkspaceOpenToExecutor(t *testing.T) {
 func TestAreas_RenameRewritesStatements(t *testing.T) {
 	st := newTempAreasStore(t)
 	i := mkAreasIssue(t, st, "carrier", "## Files\n\n- server/src/db.ts\n")
-	stmt := mkAreasStatement(t, st, i.ID, "sessions", "server", "authority")
+	stmt := mkAreasStatement(t, st, i.ID, "sessions", "server", "sync")
+	multi := mkAreasStatement(t, st, i.ID, "catalog-sync", "server", "sync,catalog")
 
-	out, _, err := runAreasViaRoot(t, []string{"rename", "concern", "authority", "authz"})
+	out, _, err := runAreasViaRoot(t, []string{"rename", "concern", "sync", "sync2"})
 	if err != nil {
 		t.Fatalf("rename: %v out %q", err, out)
 	}
-	if got := statementByID(t, st, stmt.ID).Concern; got != "authz" {
+	if got := statementByID(t, st, stmt.ID).Concern; got != "sync2" {
 		t.Fatalf("statement concern should follow the rename, got %q", got)
+	}
+	gotConcerns := strings.Split(statementByID(t, st, multi.ID).Concern, ",")
+	wantConcerns := map[string]bool{"sync2": true, "catalog": true}
+	for _, concern := range gotConcerns {
+		if concern == "sync" {
+			t.Fatalf("multi-concern statement should not retain sync, got %v", gotConcerns)
+		}
+		delete(wantConcerns, concern)
+	}
+	if len(wantConcerns) != 0 {
+		t.Fatalf("multi-concern statement should contain sync2 and catalog, got %v", gotConcerns)
 	}
 
 	areas, err := st.ListAreas(context.Background())
@@ -245,8 +257,12 @@ func TestAreas_RenameRewritesStatements(t *testing.T) {
 	for _, a := range areas {
 		names = append(names, a.Name)
 	}
-	joined := strings.Join(names, ",")
-	if !strings.Contains(joined, "authz") || strings.Contains(joined, "authority") {
+	hasSync, hasSync2 := false, false
+	for _, name := range names {
+		hasSync = hasSync || name == "sync"
+		hasSync2 = hasSync2 || name == "sync2"
+	}
+	if !hasSync2 || hasSync {
 		t.Fatalf("vocabulary should carry the new name only, got %v", names)
 	}
 }
@@ -257,6 +273,7 @@ func TestAreas_MergeRewritesStatements(t *testing.T) {
 	i := mkAreasIssue(t, st, "carrier", "## Files\n\n- server/src/db.ts\n")
 	stmt := mkAreasStatement(t, st, i.ID, "sync-window", "server", "sync")
 	keep := mkAreasStatement(t, st, i.ID, "catalog-drift", "server", "catalog")
+	multi := mkAreasStatement(t, st, i.ID, "sync-window", "server", "sync,catalog")
 
 	out, _, err := runAreasViaRoot(t, []string{"merge", "concern", "sync", "catalog"})
 	if err != nil {
@@ -267,6 +284,9 @@ func TestAreas_MergeRewritesStatements(t *testing.T) {
 	}
 	if got := statementByID(t, st, keep.ID).Concern; got != "catalog" {
 		t.Fatalf("an untouched statement should keep its concern, got %q", got)
+	}
+	if got := statementByID(t, st, multi.ID).Concern; got != "catalog" {
+		t.Fatalf("merged multi-concern statement should deduplicate the target, got %q", got)
 	}
 
 	areas, err := st.ListAreas(context.Background())
@@ -283,6 +303,33 @@ func TestAreas_MergeRewritesStatements(t *testing.T) {
 		if a.Kind == store.AreaConcern && a.Name == "catalog" && a.Topics != 2 {
 			t.Fatalf("catalog should carry both topics after the merge, got %d", a.Topics)
 		}
+	}
+}
+
+// Topic counts treat each member of a comma-separated concern as an area.
+func TestAreas_TopicCountsConcernMembership(t *testing.T) {
+	st := newTempAreasStore(t)
+	i := mkAreasIssue(t, st, "carrier", "## Files\n\n- server/src/db.ts\n")
+	mkAreasStatement(t, st, i.ID, "shared-topic", "server", "sync,catalog")
+
+	areas, err := st.ListAreas(context.Background())
+	if err != nil {
+		t.Fatalf("list areas: %v", err)
+	}
+	want := map[string]int{"sync": 1, "catalog": 1}
+	for _, a := range areas {
+		if a.Kind != store.AreaConcern {
+			continue
+		}
+		if n, ok := want[a.Name]; ok {
+			if a.Topics != n {
+				t.Fatalf("concern %s topics = %d, want %d", a.Name, a.Topics, n)
+			}
+			delete(want, a.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing seeded concerns from area list: %v", want)
 	}
 }
 
