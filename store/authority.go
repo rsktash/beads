@@ -66,6 +66,12 @@ type BriefRequest struct {
 	Since time.Time
 	// SinceLabel is the render-only description shown on section headers.
 	SinceLabel string
+	// Handoff is the lane's last handoff instant when the caller resolved
+	// one. The brief orders records changed after it first within a
+	// distance band, counts the typed diff from it, and BriefResult
+	// carries it back for the renderer's * marks. Nil orders by distance
+	// and recency alone.
+	Handoff *time.Time
 	// Depth caps link hops in RELATED; 0 means the default of one.
 	Depth int
 	// Grep filters the built sections by case-insensitive substring.
@@ -134,9 +140,32 @@ type BriefResult struct {
 	// context without changing what the reader must do.
 	DoctrineOutside int `json:"doctrine_outside,omitempty"`
 
+	// Handoff is the ordering instant — the lane's last handoff. Nil means
+	// none resolved: no record is marked and no typed diff is reported.
+	Handoff *time.Time `json:"handoff,omitempty"`
+	// Diff counts what changed on the bead since Handoff. Zero when
+	// Handoff is nil.
+	Diff BriefDiff `json:"diff,omitempty"`
+
 	Related  []RelatedBead   `json:"related,omitempty"`
 	Memories []beads.Memory  `json:"memories,omitempty"`
 	Comments []beads.Comment `json:"comments,omitempty"`
+}
+
+// BriefDiff is the typed diff the brief header reports since the lane's
+// last handoff: four counts, one per record kind plus closed dependencies.
+type BriefDiff struct {
+	// Rulings counts rulings binding the bead whose change instant
+	// (changed_at, else created_at) falls after the handoff.
+	Rulings int `json:"rulings"`
+	// QuestionsAnswered counts questions of the bead whose status is
+	// answered and whose change instant falls after the handoff.
+	QuestionsAnswered int `json:"questions_answered"`
+	// Findings counts findings of the bead filed after the handoff.
+	Findings int `json:"findings"`
+	// DepsClosed counts the bead's dependencies whose depends-on bead
+	// closed at or after the handoff.
+	DepsClosed int `json:"deps_closed"`
 }
 
 // Brief gathers the authority brief for one bead or one words query.
@@ -227,11 +256,11 @@ func (s *Store) briefStatements(ctx context.Context, req BriefRequest, res *Brie
 	all []beads.Statement, byID map[string]beads.Statement, superseded map[string]bool, concerns []string) error {
 
 	wantR, wantQ, wantF := req.Wants(BriefKindRulings), req.Wants(BriefKindQuestions), req.Wants(BriefKindFindings)
-	if !wantR && !wantQ && !wantF {
-		return nil
-	}
 
 	if req.IssueID == "" {
+		if !wantR && !wantQ && !wantF {
+			return nil
+		}
 		// Words query: the concern is the whole scope.
 		for _, st := range all {
 			// A backfill candidate has not been promoted to authority yet.
@@ -262,36 +291,62 @@ func (s *Store) briefStatements(ctx context.Context, req BriefRequest, res *Brie
 		res.Rulings = briefFilterStatements(req, res.Rulings)
 		res.Questions = briefFilterStatements(req, res.Questions)
 		res.Findings = briefFilterStatements(req, res.Findings)
+		// No bead means no distance: change-then-recency is the whole order.
+		sortBriefStatements(res.Rulings, nil, req.Handoff)
+		sortBriefStatements(res.Questions, nil, req.Handoff)
+		sortBriefStatements(res.Findings, nil, req.Handoff)
 		return nil
 	}
 
+	if !wantR && !wantQ && !wantF && req.Handoff == nil {
+		return nil
+	}
 	cv, err := s.ContractStatements(ctx, req.IssueID)
 	if err != nil {
 		return err
 	}
-	if wantR {
-		seen := map[string]bool{}
-		for _, r := range cv.Rulings {
-			row := r
-			briefEnrich(&row, byID[r.ID])
-			seen[r.ID] = true
-			res.Rulings = append(res.Rulings, row)
-		}
-		// Rule 4's union: a ruling filed elsewhere on a topic this bead
-		// carries binds it just as surely as one it inherits.
-		for _, slug := range briefBeadTopics(all, req.IssueID) {
-			for _, st := range all {
-				if st.Kind != "ruling" || st.Status != "active" || seen[st.ID] || superseded[st.ID] {
-					continue
-				}
-				if st.Topic != slug {
-					continue
-				}
-				seen[st.ID] = true
-				res.Rulings = append(res.Rulings, st)
+
+	// Every ruling that binds the bead, enriched with the columns the
+	// resolver view does not select: it feeds RULINGS and the typed diff
+	// alike, whether or not the section survives the --kind filter.
+	binding := make([]beads.Statement, 0, len(cv.Rulings))
+	seen := map[string]bool{}
+	for _, r := range cv.Rulings {
+		row := r
+		briefEnrich(&row, byID[r.ID])
+		seen[r.ID] = true
+		binding = append(binding, row)
+	}
+	// Rule 4's union: a ruling filed elsewhere on a topic this bead
+	// carries binds it just as surely as one it inherits.
+	for _, slug := range briefBeadTopics(all, req.IssueID) {
+		for _, st := range all {
+			if st.Kind != "ruling" || st.Status != "active" || seen[st.ID] || superseded[st.ID] {
+				continue
 			}
+			if st.Topic != slug {
+				continue
+			}
+			seen[st.ID] = true
+			binding = append(binding, st)
 		}
-		res.Rulings = briefFilterStatements(req, res.Rulings)
+	}
+
+	if req.Handoff != nil {
+		res.Handoff = req.Handoff
+		res.Diff = briefTypedDiff(binding, cv, *req.Handoff)
+		res.Diff.DepsClosed, err = s.countDepsClosedSince(ctx, req.IssueID, *req.Handoff)
+		if err != nil {
+			return err
+		}
+	}
+
+	if !wantR && !wantQ && !wantF {
+		return nil
+	}
+	if wantR {
+		res.Rulings = briefFilterStatements(req, binding)
+		sortBriefStatements(res.Rulings, cv.Origins, req.Handoff)
 	}
 	if wantQ {
 		for _, q := range append(append([]beads.Statement{}, cv.Questions...), cv.ClosedQuestions...) {
@@ -300,6 +355,7 @@ func (s *Store) briefStatements(ctx context.Context, req BriefRequest, res *Brie
 			res.Questions = append(res.Questions, row)
 		}
 		res.Questions = briefFilterStatements(req, res.Questions)
+		sortBriefStatements(res.Questions, cv.Origins, req.Handoff)
 	}
 	if wantF {
 		for _, f := range cv.Findings {
@@ -308,6 +364,7 @@ func (s *Store) briefStatements(ctx context.Context, req BriefRequest, res *Brie
 			res.Findings = append(res.Findings, row)
 		}
 		res.Findings = briefFilterStatements(req, res.Findings)
+		sortBriefStatements(res.Findings, cv.Origins, req.Handoff)
 	}
 	return nil
 }
@@ -710,6 +767,110 @@ func SignificantWords(s string) []string {
 		}
 	}
 	return out
+}
+
+// Binding distances. The SQL CASE in ContractStatements fixes the order of
+// the origin kinds (self < binds < epic < blocks < project); these bands
+// preserve that order — the depth-8 test is the guard. Epic distance is
+// 2 + min(depth, 7), so the deepest epic band (9) stays strictly before
+// blocks (10); project, and any record the resolver did not reach (the
+// topic union's rulings, closed questions), is 20.
+const (
+	distanceSelf    = 0
+	distanceBinds   = 1
+	distanceEpic    = 2
+	distanceBlocks  = 10
+	distanceProject = 20
+)
+
+// statementDistance maps a resolver origin onto its band. The band numbers
+// are a rendering detail; the order they impose is the SQL's.
+func statementDistance(o StatementOrigin) int {
+	switch o.Kind {
+	case "self":
+		return distanceSelf
+	case "binds":
+		return distanceBinds
+	case "epic":
+		return distanceEpic + min(o.Depth, 7)
+	case "blocks":
+		return distanceBlocks
+	default:
+		return distanceProject
+	}
+}
+
+// statementInstant is a record's change instant: changed_at when the row
+// carries one, else created_at.
+func statementInstant(st beads.Statement) time.Time {
+	if st.ChangedAt != nil {
+		return *st.ChangedAt
+	}
+	return st.CreatedAt
+}
+
+// sortBriefStatements orders one section's records by binding distance
+// (nearest first), then changed-since-handoff first, then created_at
+// descending, then id descending — so ordering never depends on row
+// insertion. A nil origins map (a words query) has no distance at all:
+// the comparator falls through to change, then recency.
+func sortBriefStatements(rows []beads.Statement, origins map[string]StatementOrigin, handoff *time.Time) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if origins != nil {
+			di, dj := statementDistance(origins[rows[i].ID]), statementDistance(origins[rows[j].ID])
+			if di != dj {
+				return di < dj
+			}
+		}
+		if handoff != nil {
+			ci, cj := statementInstant(rows[i]).After(*handoff), statementInstant(rows[j]).After(*handoff)
+			if ci != cj {
+				return ci
+			}
+		}
+		if !rows[i].CreatedAt.Equal(rows[j].CreatedAt) {
+			return rows[i].CreatedAt.After(rows[j].CreatedAt)
+		}
+		return rows[i].ID > rows[j].ID
+	})
+}
+
+// briefTypedDiff counts the three statement kinds of the typed diff from
+// the bead's binding records; the closed-dependencies count is a query and
+// is filled by the caller.
+func briefTypedDiff(rulings []beads.Statement, cv ContractView, handoff time.Time) BriefDiff {
+	var d BriefDiff
+	for _, r := range rulings {
+		if statementInstant(r).After(handoff) {
+			d.Rulings++
+		}
+	}
+	for _, q := range append(append([]beads.Statement{}, cv.Questions...), cv.ClosedQuestions...) {
+		if q.Status != "answered" {
+			continue
+		}
+		if statementInstant(q).After(handoff) {
+			d.QuestionsAnswered++
+		}
+	}
+	for _, f := range cv.Findings {
+		if f.CreatedAt.After(handoff) {
+			d.Findings++
+		}
+	}
+	return d
+}
+
+// countDepsClosedSince counts the bead's dependencies whose depends-on bead
+// closed at or after the instant — the fourth count of the typed diff, one
+// query.
+func (s *Store) countDepsClosedSince(ctx context.Context, issueID string, at time.Time) (int, error) {
+	q := s.rebind(`SELECT COUNT(*) FROM dependencies d JOIN issues i ON i.id = d.depends_on_id WHERE d.issue_id = ? AND i.closed_at IS NOT NULL AND i.closed_at >= ?`)
+	var n int
+	if err := s.db.QueryRowContext(ctx, q, issueID, at).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // LastHandoffForBead is what `--since handoff` resolves to: the newest handoff

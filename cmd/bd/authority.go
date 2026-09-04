@@ -125,6 +125,9 @@ RELATED never reads a transcript. It prints the hit command for you to run.`,
 			if err != nil {
 				return err
 			}
+			if err := resolveOrderingHandoff(cc, cmd, since, &req); err != nil {
+				return err
+			}
 
 			res, err := cc.store.Brief(cc.ctx, req)
 			if err != nil {
@@ -135,7 +138,7 @@ RELATED never reads a transcript. It prints the hit command for you to run.`,
 				return writeJSONTo(cmd.OutOrStdout(), res)
 			}
 			out := bufferedWriter(maxBytes)
-			renderBrief(out, cc, res, req, parseExpandSet(expand))
+			renderBrief(out, cc, res, req, parseExpandSet(expand), newExpandTracker())
 			return out.flush(cmd.OutOrStdout())
 		},
 	}
@@ -243,27 +246,55 @@ func resolveBriefSince(cc *cmdCtx, raw, issueID string) (time.Time, string, erro
 	return time.Time{}, "", fmt.Errorf("--since takes YYYY-MM-DD, an RFC3339 timestamp, or the word handoff")
 }
 
+// resolveOrderingHandoff sets the instant the brief's change ordering, its
+// * marks and its typed diff hang off. `--since handoff` has already
+// resolved it, and its refusals are feature 15's to make. On every other
+// brief an ambiguous plan or a missing handoff must not fail the render:
+// the marks and the diff are absent and one stderr line says why.
+func resolveOrderingHandoff(cc *cmdCtx, cmd *cobra.Command, since string, req *store.BriefRequest) error {
+	if req.IssueID == "" {
+		return nil
+	}
+	if strings.TrimSpace(since) == "handoff" {
+		at := req.Since
+		req.Handoff = &at
+		return nil
+	}
+	at, lane, ok, err := cc.store.LastHandoffForBead(cc.ctx, req.IssueID)
+	switch {
+	case err != nil:
+		fmt.Fprintf(cmd.ErrOrStderr(), "bd: no * marks or typed diff: %v\n", err)
+	case ok:
+		req.Handoff = &at
+	case lane != "":
+		fmt.Fprintf(cmd.ErrOrStderr(), "bd: no * marks or typed diff: lane %s has no handoff\n", lane)
+	default:
+		fmt.Fprintf(cmd.ErrOrStderr(), "bd: no * marks or typed diff: %s is in no execution plan lane\n", req.IssueID)
+	}
+	return nil
+}
+
 // renderBrief writes the seven labelled sections in their fixed order.
-func renderBrief(w io.Writer, cc *cmdCtx, res store.BriefResult, req store.BriefRequest, expand map[string]bool) {
+func renderBrief(w io.Writer, cc *cmdCtx, res store.BriefResult, req store.BriefRequest, expand map[string]bool, tr *expandTracker) {
 	writeBriefLine(w, "BRIEF", briefHeaderLine(res, req))
 
 	if req.Wants(store.BriefKindRulings) {
-		writeBriefSection(w, "RULINGS", briefRulingRows(res, expand, cc),
+		writeBriefSection(w, "RULINGS", briefRulingRows(res, expand, cc, tr),
 			briefRulingsCap, briefMoreCmd("bd rulings", res.IssueID), req.SinceLabel)
 	}
 	if len(req.Kinds) == 0 {
 		writeBriefSection(w, "TOPIC", briefTopicRows(res), briefTopicsCap, briefTopicsCmd(res), req.SinceLabel)
 	}
 	if req.Wants(store.BriefKindQuestions) {
-		writeBriefSection(w, "QUESTIONS", briefQuestionRows(res, expand, cc),
+		writeBriefSection(w, "QUESTIONS", briefQuestionRows(res, expand, cc, tr),
 			briefQuestionsCap, briefMoreCmd("bd question list", res.IssueID), req.SinceLabel)
 	}
 	if req.Wants(store.BriefKindFindings) {
-		writeBriefSection(w, "FINDINGS", briefFindingRows(res, expand, cc),
+		writeBriefSection(w, "FINDINGS", briefFindingRows(res, expand, cc, tr),
 			briefFindingsCap, briefMoreCmd("bd show", res.IssueID), req.SinceLabel)
 	}
 	if req.Wants(store.BriefKindDoctrine) {
-		writeBriefDoctrine(w, res, expand, cc, req.SinceLabel)
+		writeBriefDoctrine(w, res, expand, cc, tr, req.SinceLabel)
 	}
 	writeBriefRelated(w, res, req)
 	if req.Wants(store.BriefKindComments) && (len(res.Comments) > 0 || req.SinceLabel != "") {
@@ -326,10 +357,15 @@ func briefTopicsCmd(res store.BriefResult) string {
 }
 
 // briefHeaderLine is the BRIEF line: the bead's identity, or the areas a words
-// query was drawn from.
+// query was drawn from. When a handoff ordered the brief, the line closes
+// with the typed diff — the four counts of what changed since it.
 func briefHeaderLine(res store.BriefResult, req store.BriefRequest) string {
 	if res.IssueID != "" {
-		return fmt.Sprintf("%s  [%s] %s p%d  %s", res.IssueID, res.Status, res.Type, res.Priority, res.Title)
+		line := fmt.Sprintf("%s  [%s] %s p%d  %s", res.IssueID, res.Status, res.Type, res.Priority, res.Title)
+		if res.Handoff != nil {
+			line += "  " + briefTypedDiffLine(res.Diff)
+		}
+		return line
 	}
 	line := "concern " + req.Concern
 	if req.Workspace != "" {
@@ -341,25 +377,75 @@ func briefHeaderLine(res store.BriefResult, req store.BriefRequest) string {
 	return line
 }
 
-func briefRulingRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx) []briefRow {
+// briefTypedDiffLine renders the typed diff: one parenthesised list of the
+// four counts.
+func briefTypedDiffLine(d store.BriefDiff) string {
+	return fmt.Sprintf("(since handoff: %s, %s, %s, %s)",
+		briefPlural(d.Rulings, "ruling", "rulings"),
+		briefPlural(d.QuestionsAnswered, "question answered", "questions answered"),
+		briefPlural(d.Findings, "finding", "findings"),
+		briefPlural(d.DepsClosed, "dep closed", "deps closed"))
+}
+
+// briefPlural is "n one" for one, else "n many" — the counted nouns put
+// their plural where the phrase needs it (deps closed, questions answered).
+func briefPlural(n int, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// briefChangeMark is the leading star a record changed since the ordering
+// handoff carries on its line.
+func briefChangeMark(st beads.Statement, handoff *time.Time) string {
+	if handoff == nil {
+		return ""
+	}
+	at := st.CreatedAt
+	if st.ChangedAt != nil {
+		at = *st.ChangedAt
+	}
+	if at.After(*handoff) {
+		return "* "
+	}
+	return ""
+}
+
+// briefDedupeRow is the bare line a record already expanded earlier in this
+// session renders as — deduplication, not prioritization: the row keeps its
+// place in the order and shows nothing else.
+func briefDedupeRow(id string) briefRow {
+	return briefRow{line: id + "  (expanded earlier this session)"}
+}
+
+func briefRulingRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx, tr *expandTracker) []briefRow {
 	rows := make([]briefRow, 0, len(res.Rulings))
 	for _, r := range res.Rulings {
+		if tr.deduped(r.ID) {
+			rows = append(rows, briefDedupeRow(r.ID))
+			continue
+		}
 		rows = append(rows, briefRow{
-			line:  rulingHeadline(r, res.IssueID),
-			extra: briefExpansion(r, expand, cc),
+			line:  briefChangeMark(r, res.Handoff) + rulingHeadline(r, res.IssueID),
+			extra: briefExpansion(r, expand, cc, tr),
 		})
 	}
 	return rows
 }
 
-func briefFindingRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx) []briefRow {
+func briefFindingRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx, tr *expandTracker) []briefRow {
 	idW := briefWidth(res.Findings, func(f beads.Statement) string { return f.ID })
 	rows := make([]briefRow, 0, len(res.Findings))
 	for _, f := range res.Findings {
+		if tr.deduped(f.ID) {
+			rows = append(rows, briefDedupeRow(f.ID))
+			continue
+		}
 		rows = append(rows, briefRow{
-			line: fmt.Sprintf("%s  %s  %s  %s", padTopicCell(f.ID, idW),
+			line: fmt.Sprintf("%s  %s  %s  %s", padTopicCell(briefChangeMark(f, res.Handoff)+f.ID, idW+2),
 				f.CreatedAt.Format("2006-01-02"), authorColumn(f.FiledBy), headlineText(f.Text)),
-			extra: briefExpansion(f, expand, cc),
+			extra: briefExpansion(f, expand, cc, tr),
 		})
 	}
 	return rows
@@ -367,7 +453,7 @@ func briefFindingRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx)
 
 // briefQuestionRows prints the status word a reader acts on — an active
 // question is open — and what answered a closed one, so no id needs a lookup.
-func briefQuestionRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx) []briefRow {
+func briefQuestionRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx, tr *expandTracker) []briefRow {
 	idW := briefWidth(res.Questions, func(q beads.Statement) string { return q.ID })
 	statusW := briefWidth(res.Questions, briefQuestionStatus)
 	answerW := briefWidth(res.Questions, func(q beads.Statement) string {
@@ -378,7 +464,11 @@ func briefQuestionRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx
 	})
 	rows := make([]briefRow, 0, len(res.Questions))
 	for _, q := range res.Questions {
-		line := fmt.Sprintf("%s  %s  %s  %s", padTopicCell(q.ID, idW),
+		if tr.deduped(q.ID) {
+			rows = append(rows, briefDedupeRow(q.ID))
+			continue
+		}
+		line := fmt.Sprintf("%s  %s  %s  %s", padTopicCell(briefChangeMark(q, res.Handoff)+q.ID, idW+2),
 			q.CreatedAt.Format("2006-01-02"), authorColumn(q.FiledBy),
 			padTopicCell(briefQuestionStatus(q), statusW))
 		if answerW > 0 {
@@ -389,7 +479,7 @@ func briefQuestionRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx
 			line += "  " + padTopicCell(answer, answerW)
 		}
 		line += "  " + headlineText(q.Text)
-		rows = append(rows, briefRow{line: line, extra: briefExpansion(q, expand, cc)})
+		rows = append(rows, briefRow{line: line, extra: briefExpansion(q, expand, cc, tr)})
 	}
 	return rows
 }
@@ -440,7 +530,7 @@ func briefTopicRows(res store.BriefResult) []briefRow {
 // writeBriefDoctrine prints the laws over this bead's areas — ruling id,
 // concern, law — and reports every other active law as a count. A law column
 // nothing writes yet falls back to the ruling's own headline.
-func writeBriefDoctrine(w io.Writer, res store.BriefResult, expand map[string]bool, cc *cmdCtx, sinceLabel string) {
+func writeBriefDoctrine(w io.Writer, res store.BriefResult, expand map[string]bool, cc *cmdCtx, tr *expandTracker, sinceLabel string) {
 	idW, concernW := 0, 0
 	for _, d := range res.Doctrine {
 		idW = max(idW, len(d.ID))
@@ -448,6 +538,10 @@ func writeBriefDoctrine(w io.Writer, res store.BriefResult, expand map[string]bo
 	}
 	rows := make([]briefRow, 0, len(res.Doctrine))
 	for _, d := range res.Doctrine {
+		if tr.deduped(d.ID) {
+			rows = append(rows, briefDedupeRow(d.ID))
+			continue
+		}
 		law := strings.TrimSpace(d.Law)
 		if law == "" {
 			law = d.Text
@@ -455,7 +549,7 @@ func writeBriefDoctrine(w io.Writer, res store.BriefResult, expand map[string]bo
 		rows = append(rows, briefRow{
 			line: fmt.Sprintf("%s  %s  %s", padTopicCell(d.ID, idW),
 				padTopicCell(briefDoctrineArea(d), concernW), headlineText(law)),
-			extra: briefExpansionByID(cc, d.ID, expand, d.Text, "", d.Law),
+			extra: briefExpansionByID(cc, d.ID, expand, tr, d.Text, "", d.Law),
 		})
 	}
 	writeBriefSection(w, "DOCTRINE", rows, briefDoctrineCap, "bd rulings --scope project", sinceLabel)
@@ -555,15 +649,18 @@ func briefTranscriptGlob() string {
 }
 
 // briefExpansion opens one statement in full under its line: the whole text,
-// the owner's verbatim sentence, the rationale, and where it came from.
-func briefExpansion(st beads.Statement, expand map[string]bool, cc *cmdCtx) []string {
-	return briefExpansionByID(cc, st.ID, expand, st.Text, st.Verbatim, st.Rationale)
+// the owner's verbatim sentence, the rationale, and where it came from. The
+// opened id is recorded in the session's expand state so a later brief can
+// render it as its id alone.
+func briefExpansion(st beads.Statement, expand map[string]bool, cc *cmdCtx, tr *expandTracker) []string {
+	return briefExpansionByID(cc, st.ID, expand, tr, st.Text, st.Verbatim, st.Rationale)
 }
 
-func briefExpansionByID(cc *cmdCtx, id string, expand map[string]bool, text, verbatim, rationale string) []string {
+func briefExpansionByID(cc *cmdCtx, id string, expand map[string]bool, tr *expandTracker, text, verbatim, rationale string) []string {
 	if !expand[id] {
 		return nil
 	}
+	tr.record(id)
 	var out []string
 	out = append(out, strings.Split(text, "\n")...)
 	if strings.TrimSpace(verbatim) != "" {
