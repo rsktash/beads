@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rsktash/beads"
+	"github.com/rsktash/beads/internal/config"
 	"github.com/rsktash/beads/store"
 )
 
@@ -428,7 +429,7 @@ func briefRulingRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx, 
 		}
 		rows = append(rows, briefRow{
 			line:  briefChangeMark(r, res.Handoff) + rulingHeadline(r, res.IssueID),
-			extra: briefExpansion(r, expand, cc, tr),
+			extra: append(briefCitationLines(cc, r.ID, r.Text), briefExpansion(r, expand, cc, tr)...),
 		})
 	}
 	return rows
@@ -445,7 +446,7 @@ func briefFindingRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx,
 		rows = append(rows, briefRow{
 			line: fmt.Sprintf("%s  %s  %s  %s", padTopicCell(briefChangeMark(f, res.Handoff)+f.ID, idW+2),
 				f.CreatedAt.Format("2006-01-02"), authorColumn(f.FiledBy), headlineText(f.Text)),
-			extra: briefExpansion(f, expand, cc, tr),
+			extra: append(briefCitationLines(cc, f.ID, f.Text+"\n"+f.Evidence), briefExpansion(f, expand, cc, tr)...),
 		})
 	}
 	return rows
@@ -479,9 +480,32 @@ func briefQuestionRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx
 			line += "  " + padTopicCell(answer, answerW)
 		}
 		line += "  " + headlineText(q.Text)
-		rows = append(rows, briefRow{line: line, extra: briefExpansion(q, expand, cc, tr)})
+		rows = append(rows, briefRow{line: line, extra: append(briefCitationLines(cc, q.ID, q.Text), briefExpansion(q, expand, cc, tr)...)})
 	}
 	return rows
+}
+
+func briefCitationLines(cc *cmdCtx, id, text string) []string {
+	cfg, err := config.Resolve(flagDB)
+	if err != nil || cfg.ProjectRoot == "" {
+		return nil
+	}
+	var out []string
+	for _, citation := range store.ParseCitations(text) {
+		state, err := store.ResolveCitation(cfg.ProjectRoot, citation)
+		if err != nil {
+			continue
+		}
+		line := "cite " + citation.String() + "  " + string(state.Status)
+		switch state.Status {
+		case store.CitationMoved:
+			line += fmt.Sprintf(" -> :%d", state.Line)
+		case store.CitationStale:
+			line += fmt.Sprintf(" (bd source %s recovers it)", id)
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // briefQuestionStatus renders active as open: "active" is the stored word,
