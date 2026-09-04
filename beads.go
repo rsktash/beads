@@ -218,6 +218,13 @@ type Comment struct {
 	Author    string    `db:"author" json:"author"`
 	Text      string    `db:"text" json:"text"`
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	// Retraction mark (bd comment retract): the row is never deleted and the
+	// text never edited, so the three fields are set together or all zero.
+	// omitempty keeps a non-retracted comment's JSON byte-identical to the
+	// pre-mark form.
+	RetractedAt *time.Time `db:"retracted_at" json:"retracted_at,omitempty"`
+	RetractedBy string     `db:"retracted_by" json:"retracted_by,omitempty"`
+	RetractNote string     `db:"retract_note" json:"retract_note,omitempty"`
 }
 
 type Event struct {
