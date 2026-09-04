@@ -50,6 +50,7 @@ func mkQFIssue(t *testing.T, st *store.Store, title string) *beads.Issue {
 
 func runQuestionCmd(t *testing.T, args []string) (string, string, error) {
 	t.Helper()
+	args = withFixtureTopic(args)
 	root := newQuestionCmd()
 	bufOut := &bytes.Buffer{}
 	bufErr := &bytes.Buffer{}
@@ -62,6 +63,7 @@ func runQuestionCmd(t *testing.T, args []string) (string, string, error) {
 
 func runFindingCmd(t *testing.T, args []string) (string, string, error) {
 	t.Helper()
+	args = withFixtureTopic(args)
 	root := newFindingCmd()
 	bufOut := &bytes.Buffer{}
 	bufErr := &bytes.Buffer{}

@@ -23,11 +23,17 @@ func newQuestionCmd() *cobra.Command {
 }
 
 func newQuestionAddCmd() *cobra.Command {
+	var topic string
 	cmd := &cobra.Command{
-		Use:   "add <issue-id> <text>",
+		Use:   "add <issue-id> <text> --topic <slug>",
 		Short: "File a question (open to all actors)",
-		Long:  `File a question against a bead. Requires an issue id and text. Open to all actors including executors.`,
-		Args:  cobra.ExactArgs(2),
+		Long: `File a question against a bead. Requires an issue id, text and a topic slug. Open to all actors including executors.
+
+--topic is required: it is how the next writer finds this question instead of
+minting a second slug for the same argument. Without it the command prints the
+catalogue for the bead's areas and refuses. The bead's workspace and concerns
+are stamped on the row from its ## Files section.`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			identity, _ := resolveActor()
 			issueIDStr := strings.TrimSpace(args[0])
@@ -39,19 +45,26 @@ func newQuestionAddCmd() *cobra.Command {
 				return fmt.Errorf("text is required")
 			}
 			issueID := issueIDStr
-			st := &beads.Statement{
-				Kind:    "question",
-				IssueID: &issueID,
-				Text:    text,
-				FiledBy: identity,
-				Status:  "active",
-				Scope:   "inherit",
-			}
 			cc, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
 			defer cc.store.Close()
+			slug, workspace, concern, err := resolveStatementTopic(cc, cmd.ErrOrStderr(), issueID, topic)
+			if err != nil {
+				return err
+			}
+			st := &beads.Statement{
+				Kind:      "question",
+				IssueID:   &issueID,
+				Text:      text,
+				FiledBy:   identity,
+				Status:    "active",
+				Scope:     "inherit",
+				Topic:     slug,
+				Workspace: workspace,
+				Concern:   concern,
+			}
 			if err := cc.store.CreateStatement(cc.ctx, st); err != nil {
 				return err
 			}
@@ -62,6 +75,7 @@ func newQuestionAddCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&topic, "topic", "", "topic slug this question belongs to (required; [a-z0-9-]{2,48})")
 	return cmd
 }
 

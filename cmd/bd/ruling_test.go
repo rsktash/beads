@@ -58,8 +58,32 @@ func countStatements(t *testing.T, dsn string) int {
 	return len(list)
 }
 
+// fixtureTopic is the slug the pre-topics fixtures file under. Feature 10 made
+// --topic required on ruling, question and finding add; the fixtures below
+// predate it and assert nothing about topics, so the argument is added once in
+// the shared runners rather than at every call site. One slug for all three
+// kinds keeps `--answers` inheritance consistent: a ruling answering a fixture
+// question inherits the same slug it would have been given.
+const fixtureTopic = "fixture-topic"
+
+// withFixtureTopic appends --topic to an add invocation that does not carry
+// one. A test exercising the missing-topic refusal drives the commands through
+// newRoot instead (topics_test.go), so it is never reached by this.
+func withFixtureTopic(args []string) []string {
+	if len(args) == 0 || args[0] != "add" {
+		return args
+	}
+	for _, a := range args {
+		if a == "--topic" {
+			return args
+		}
+	}
+	return append(append([]string{}, args...), "--topic", fixtureTopic)
+}
+
 func runRulingAdd(t *testing.T, args []string) (string, string, error) {
 	t.Helper()
+	args = withFixtureTopic(args)
 	root := newRulingCmd()
 	bufOut := &bytes.Buffer{}
 	bufErr := &bytes.Buffer{}

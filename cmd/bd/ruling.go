@@ -54,14 +54,21 @@ func newRulingAddCmd() *cobra.Command {
 		parkFlag   bool
 		verbatim   string
 		binds      string
+		topic      string
+		concern    string
 	)
 	cmd := &cobra.Command{
-		Use:   "add [<issue-id>] <text>",
+		Use:   "add [<issue-id>] <text> --topic <slug>",
 		Short: "File a ruling (actor-gated: BD_ACTOR=executor is refused)",
 		Long: `File a ruling. With one arg, files a project-scoped ruling (issue_id NULL). With two args, first is issue id, second is text.
 
 Flags --defer, --park and --close atomically update the bead's state in the same transaction as the ruling row.
 --park defers the bead to the far future (9999-12-31) and adds label 'parked'; it is deferred+parked label, no new status.
+
+--topic is required, project-scoped rulings included, unless --answers names a
+question: a ruling then inherits that question's topic, workspace and concern,
+and an explicit --topic that disagrees with it is refused. --concern names the
+area of a project-scoped ruling, which has no bead to read areas from.
 
 Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question instead. BD_ACTOR=coordinator or unset (owner) is allowed.`,
 		Args: cobra.RangeArgs(1, 2),
@@ -175,6 +182,13 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 			}
 			defer cc.store.Close()
 
+			// Topic before the duplicate listing: a ruling with no topic is
+			// refused with the catalogue, and printing both menus at once
+			// would bury the one the writer must act on.
+			if err := applyRulingTopic(cc, cmd.ErrOrStderr(), st, answersID, topic, concern); err != nil {
+				return err
+			}
+
 			// Print the bead's own existing rulings to stderr, and refuse a
 			// write that repeats one of their headlines — unless this ruling
 			// supersedes one explicitly, which is the sanctioned way to
@@ -206,6 +220,8 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 	cmd.Flags().BoolVar(&parkFlag, "park", false, "park the bead (defer far future + label 'parked', atomic with ruling)")
 	cmd.Flags().StringVar(&verbatim, "verbatim", "", "the owner's verbatim sentence backing this ruling (stored untouched, never in the default headline)")
 	cmd.Flags().StringVar(&binds, "binds", "", "attach this ruling explicitly to a second bead (issue-scoped rulings only)")
+	cmd.Flags().StringVar(&topic, "topic", "", "topic slug this ruling belongs to (required unless --answers supplies it)")
+	cmd.Flags().StringVar(&concern, "concern", "", "concern for a project-scoped ruling, which has no bead to read areas from")
 	return cmd
 }
 

@@ -69,6 +69,7 @@ func newRoot() *cobra.Command {
 		newAnnotateCmd(),
 		newSourceCmd(),
 		newAreasCmd(),
+		newTopicsCmd(),
 	)
 	return root
 }
