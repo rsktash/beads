@@ -22,6 +22,7 @@ state, not free-form notes.
 
 ## Daily flow
 
+- ` + "`bd authority <bead-id | words…>`" + ` — the authority brief: rulings, topics, questions, findings, doctrine and links in one capped read. Run it first on any bead or owner question; a words query needs ` + "`--concern <name>`" + `.
 - ` + "`bd ready`" + ` — what's available to work on (no open blockers, deferred, ephemeral, or open questions).
 - ` + "`bd plan show <plan>`" + ` — the execution plan: every lane with its cursor, holder, last handoff and the graph-computed readiness of the next item.
 - ` + "`bd show <id>`" + ` — execution contract for the bead (see Reading). Long descriptions print an
