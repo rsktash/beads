@@ -36,6 +36,20 @@ type ContractView struct {
 	// this bead, newest first. It is a direct query, never an inheritance
 	// arm: the back-link does not inherit.
 	SourcedFindings []beads.Statement `json:"sourced_findings,omitempty"`
+	// Origins maps a statement id to the origin the resolver reached it by
+	// (origin kind and depth). The SQL CASE in ContractStatements fixes the
+	// order of the origin kinds; this map carries that origin to readers
+	// that order by binding distance. A statement the view reached twice
+	// keeps the nearest origin — the first row the ORDER BY put there.
+	Origins map[string]StatementOrigin `json:"origins,omitempty"`
+}
+
+// StatementOrigin is how the resolver reached one statement for one bead.
+// Kind is the resolved_statements origin_kind (self, binds, epic, blocks,
+// project); Depth is the ancestor-chain depth the epic arm reports.
+type StatementOrigin struct {
+	Kind  string `json:"kind"`
+	Depth int    `json:"depth"`
 }
 
 // kindPrefix maps statement kind to its citable prefix.
@@ -802,6 +816,7 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 	defer rows.Close()
 
 	var rulings, questions, findings []beads.Statement
+	origins := map[string]StatementOrigin{}
 	// seen dedupes a statement reachable by two arms (e.g. bound explicitly
 	// and also inherited through the epic chain), keeping the first row —
 	// the ORDER BY above has already put the nearest origin first.
@@ -818,6 +833,11 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 			continue
 		}
 		seen[statementID] = true
+		origin := StatementOrigin{Kind: originKind}
+		if depth.Valid {
+			origin.Depth = int(depth.Int64)
+		}
+		origins[statementID] = origin
 		st := beads.Statement{
 			ID:            statementID,
 			Kind:          kind,
@@ -907,6 +927,7 @@ func (s *Store) ContractStatements(ctx context.Context, issueID string) (Contrac
 		ClosedQuestions: closed,
 		AnswerKinds:     answerKinds,
 		SourcedFindings: sourced,
+		Origins:         origins,
 	}, nil
 }
 
