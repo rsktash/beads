@@ -40,7 +40,9 @@ func newCommentCmd() *cobra.Command {
 			defer cc.store.Close()
 			c := &beads.Comment{IssueID: args[0], Text: args[1], Author: author}
 			if c.Author == "" {
-				c.Author = assigneeFromEnv()
+				// The same actor resolution every other record uses, so an
+				// owner comment reads as owner and an agent comment as agent.
+				c.Author, _ = resolveActor()
 			}
 			if err := cc.store.AddComment(cc.ctx, c); err != nil {
 				return err
@@ -52,7 +54,7 @@ func newCommentCmd() *cobra.Command {
 			return nil
 		},
 	}
-	add.Flags().StringVarP(&author, "author", "a", "", "comment author (defaults to current user)")
+	add.Flags().StringVarP(&author, "author", "a", "", "comment author (defaults to the resolved actor identity, e.g. owner:alice)")
 	var tags []string
 	var lastN int
 	list := &cobra.Command{
