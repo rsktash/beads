@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +16,7 @@ var questionListStatuses = []string{"active", "answered", "retracted", "supersed
 
 func newQuestionListCmd() *cobra.Command {
 	var statusFlag string
+	var staleDays int
 	cmd := &cobra.Command{
 		Use:   "list [issue-id]",
 		Short: "List questions — the blocked frontier (read-only, open to every actor)",
@@ -28,8 +30,11 @@ listing never picks up an ancestor's or a project-scoped question.
 
 --status lists another status instead of active (answered, retracted, superseded).
 Each row shows: question id, issue id, created date, and a short text preview. Where
-a question was answered, the row names what answered it and of which kind. --json
-emits the full rows.
+a question was answered, the row names what answered it and of which kind. An
+active question idle past --stale-days (default 14) carries the marker
+"possibly moot (Nd)" with bd question close prepared on the line under it;
+--stale-days 0 disables the marker, which never changes a question's status or
+stops it blocking bd ready. --json emits the full rows.
 
 Machine contract:
 - No matches: prints "questions: no matches" on stdout, exit 0.
@@ -127,11 +132,18 @@ Read-only: open to every actor, including executors. An executor must be able to
 					}
 					line += fmt.Sprintf("  %s: %s", kind, *q.AnsweredBy)
 				}
+				if note := questionExpiryNote(q, time.Now().UTC(), staleDays); note != "" {
+					marker, command := expiryNoteParts(note)
+					fmt.Fprintln(cmd.OutOrStdout(), line+"  "+marker)
+					fmt.Fprintln(cmd.OutOrStdout(), "        "+command)
+					continue
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&statusFlag, "status", "", "list questions with this status instead of active (answered|retracted|superseded)")
+	cmd.Flags().IntVar(&staleDays, "stale-days", defaultStaleDays, "mark a question idle more than N days possibly moot, with its close command prepared (0 disables)")
 	return cmd
 }
