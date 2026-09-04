@@ -108,7 +108,6 @@ type Issue struct {
 	ContentHash        string `db:"content_hash" json:"content_hash,omitempty"`
 	Title              string `db:"title" json:"title"`
 	Description        string `db:"description" json:"description,omitempty"`
-	Design             string `db:"design" json:"design,omitempty"`
 	AcceptanceCriteria string `db:"acceptance_criteria" json:"acceptance_criteria,omitempty"`
 	Notes              string `db:"notes" json:"notes,omitempty"`
 

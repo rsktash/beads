@@ -223,7 +223,6 @@ func (m *migrator) copyIssuesFromTable(ctx context.Context, table string, forceE
 			ContentHash:        asString(row["content_hash"]),
 			Title:              asString(row["title"]),
 			Description:        asString(row["description"]),
-			Design:             asString(row["design"]),
 			AcceptanceCriteria: asString(row["acceptance_criteria"]),
 			Notes:              asString(row["notes"]),
 			Status:             beads.Status(strDefault(row["status"], "open")),

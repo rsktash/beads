@@ -42,7 +42,6 @@ type Issue struct {
 	ContentHash        string       `json:"content_hash"`
 	Title              string       `json:"title"`
 	Description        string       `json:"description"`
-	Design             string       `json:"design"`
 	AcceptanceCriteria string       `json:"acceptance_criteria"`
 	Notes              string       `json:"notes"`
 	Status             string       `json:"status"`

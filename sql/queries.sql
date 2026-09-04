@@ -4,7 +4,7 @@
 
 -- name: CreateIssue :exec
 INSERT INTO issues (
-    id, content_hash, title, description, design, acceptance_criteria, notes,
+    id, content_hash, title, description, acceptance_criteria, notes,
     status, priority, issue_type, assignee, estimated_minutes,
     created_at, created_by, owner, updated_at, started_at, closed_at, closed_by_session,
     external_ref, spec_id, metadata, source_repo, source_system, close_reason,
@@ -14,8 +14,7 @@ INSERT INTO issues (
     due_at, defer_until
 ) VALUES (
     sqlc.arg('id'), sqlc.arg('content_hash'), sqlc.arg('title'),
-    sqlc.arg('description'), sqlc.arg('design'), sqlc.arg('acceptance_criteria'),
-    sqlc.arg('notes'),
+    sqlc.arg('description'), sqlc.arg('acceptance_criteria'), sqlc.arg('notes'),
     sqlc.arg('status'), sqlc.arg('priority'), sqlc.arg('issue_type'),
     sqlc.arg('assignee'), sqlc.arg('estimated_minutes'),
     sqlc.arg('created_at'), sqlc.arg('created_by'), sqlc.arg('owner'),

@@ -153,7 +153,7 @@ func (q *Queries) CountIssuesWithPrefix(ctx context.Context, likePattern string)
 const createIssue = `-- name: CreateIssue :exec
 
 INSERT INTO issues (
-    id, content_hash, title, description, design, acceptance_criteria, notes,
+    id, content_hash, title, description, acceptance_criteria, notes,
     status, priority, issue_type, assignee, estimated_minutes,
     created_at, created_by, owner, updated_at, started_at, closed_at, closed_by_session,
     external_ref, spec_id, metadata, source_repo, source_system, close_reason,
@@ -164,20 +164,19 @@ INSERT INTO issues (
 ) VALUES (
     ?1, ?2, ?3,
     ?4, ?5, ?6,
-    ?7,
-    ?8, ?9, ?10,
-    ?11, ?12,
-    ?13, ?14, ?15,
-    ?16, ?17, ?18,
-    ?19,
-    ?20, ?21, ?22,
-    ?23, ?24, ?25,
-    ?26, ?27, ?28,
-    ?29,
-    ?30, ?31, ?32,
-    ?33, ?34, ?35,
-    ?36,
-    ?37, ?38
+    ?7, ?8, ?9,
+    ?10, ?11,
+    ?12, ?13, ?14,
+    ?15, ?16, ?17,
+    ?18,
+    ?19, ?20, ?21,
+    ?22, ?23, ?24,
+    ?25, ?26, ?27,
+    ?28,
+    ?29, ?30, ?31,
+    ?32, ?33, ?34,
+    ?35,
+    ?36, ?37
 )
 `
 
@@ -186,7 +185,6 @@ type CreateIssueParams struct {
 	ContentHash        string       `json:"content_hash"`
 	Title              string       `json:"title"`
 	Description        string       `json:"description"`
-	Design             string       `json:"design"`
 	AcceptanceCriteria string       `json:"acceptance_criteria"`
 	Notes              string       `json:"notes"`
 	Status             string       `json:"status"`
@@ -231,7 +229,6 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error 
 		arg.ContentHash,
 		arg.Title,
 		arg.Description,
-		arg.Design,
 		arg.AcceptanceCriteria,
 		arg.Notes,
 		arg.Status,
@@ -305,7 +302,7 @@ func (q *Queries) GetConfigValue(ctx context.Context, key string) (string, error
 }
 
 const getIssue = `-- name: GetIssue :one
-SELECT id, content_hash, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, created_by, owner, updated_at, started_at, closed_at, closed_by_session, external_ref, spec_id, metadata, source_repo, source_system, close_reason, sender, ephemeral, pinned, is_template, wisp_type, mol_type, role_type, event_kind, actor, target, payload, due_at, defer_until FROM issues WHERE id = ?1
+SELECT id, content_hash, title, description, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, created_by, owner, updated_at, started_at, closed_at, closed_by_session, external_ref, spec_id, metadata, source_repo, source_system, close_reason, sender, ephemeral, pinned, is_template, wisp_type, mol_type, role_type, event_kind, actor, target, payload, due_at, defer_until FROM issues WHERE id = ?1
 `
 
 func (q *Queries) GetIssue(ctx context.Context, id string) (Issue, error) {
@@ -316,7 +313,6 @@ func (q *Queries) GetIssue(ctx context.Context, id string) (Issue, error) {
 		&i.ContentHash,
 		&i.Title,
 		&i.Description,
-		&i.Design,
 		&i.AcceptanceCriteria,
 		&i.Notes,
 		&i.Status,
@@ -542,7 +538,7 @@ func (q *Queries) NextCounterID(ctx context.Context, prefix string) (int64, erro
 }
 
 const readyAt = `-- name: ReadyAt :many
-SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes, i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes, i.created_at, i.created_by, i.owner, i.updated_at, i.started_at, i.closed_at, i.closed_by_session, i.external_ref, i.spec_id, i.metadata, i.source_repo, i.source_system, i.close_reason, i.sender, i.ephemeral, i.pinned, i.is_template, i.wisp_type, i.mol_type, i.role_type, i.event_kind, i.actor, i.target, i.payload, i.due_at, i.defer_until FROM issues i
+SELECT i.id, i.content_hash, i.title, i.description, i.acceptance_criteria, i.notes, i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes, i.created_at, i.created_by, i.owner, i.updated_at, i.started_at, i.closed_at, i.closed_by_session, i.external_ref, i.spec_id, i.metadata, i.source_repo, i.source_system, i.close_reason, i.sender, i.ephemeral, i.pinned, i.is_template, i.wisp_type, i.mol_type, i.role_type, i.event_kind, i.actor, i.target, i.payload, i.due_at, i.defer_until FROM issues i
 WHERE i.status = 'open'
   AND i.ephemeral = 0
   AND i.is_template = 0
@@ -571,7 +567,6 @@ func (q *Queries) ReadyAt(ctx context.Context, now sql.NullTime) ([]Issue, error
 			&i.ContentHash,
 			&i.Title,
 			&i.Description,
-			&i.Design,
 			&i.AcceptanceCriteria,
 			&i.Notes,
 			&i.Status,

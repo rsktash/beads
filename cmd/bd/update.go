@@ -12,14 +12,14 @@ import (
 
 func newUpdateCmd() *cobra.Command {
 	var (
-		title, desc, design, accept, notes string
-		bodyFile, designFile               string
-		typeStr, statStr                   string
-		priority                           int
-		assignee, owner                    string
-		closeReason                        string
-		dueStr, deferStr                   string
-		claim                              bool
+		title, desc, accept, notes string
+		bodyFile                   string
+		typeStr, statStr           string
+		priority                   int
+		assignee, owner            string
+		closeReason                string
+		dueStr, deferStr           string
+		claim                      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -34,8 +34,8 @@ func newUpdateCmd() *cobra.Command {
 
 			u := store.IssueUpdate{}
 			f := cmd.Flags()
-			// --body-file / --design-file: read once and treat as if --desc /
-			// --design were passed. Override inline flags if both given.
+			// --body-file: read once and treat as if --desc were passed.
+			// Override the inline flag if both are given.
 			if f.Changed("body-file") {
 				body, err := readFileContents(bodyFile)
 				if err != nil {
@@ -44,22 +44,11 @@ func newUpdateCmd() *cobra.Command {
 				desc = body
 				u.Description = &desc
 			}
-			if f.Changed("design-file") {
-				body, err := readFileContents(designFile)
-				if err != nil {
-					return fmt.Errorf("--design-file: %w", err)
-				}
-				design = body
-				u.Design = &design
-			}
 			if f.Changed("title") {
 				u.Title = &title
 			}
 			if f.Changed("desc") {
 				u.Description = &desc
-			}
-			if f.Changed("design") {
-				u.Design = &design
 			}
 			if f.Changed("accept") {
 				u.AcceptanceCriteria = &accept
@@ -131,8 +120,6 @@ func newUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&title, "title", "", "new title")
 	cmd.Flags().StringVarP(&desc, "desc", "d", "", "new description")
 	cmd.Flags().StringVar(&bodyFile, "body-file", "", "read description from file (overrides --desc)")
-	cmd.Flags().StringVar(&design, "design", "", "new design notes")
-	cmd.Flags().StringVar(&designFile, "design-file", "", "read design notes from file (overrides --design)")
 	cmd.Flags().StringVar(&accept, "accept", "", "new acceptance criteria")
 	cmd.Flags().StringVar(&notes, "notes", "", "new notes")
 	cmd.Flags().StringVarP(&typeStr, "type", "t", "", "new type")

@@ -23,7 +23,6 @@ import (
 //	assignee           assignee or empty
 //	owner              owner or empty
 //	description        raw description body (use bd show --section for slices)
-//	design             raw design body
 //	accept             raw acceptance criteria
 //	notes              raw notes
 //	parent             parent id via the parent-child edge, empty if none
@@ -151,8 +150,6 @@ func newGetCmd() *cobra.Command {
 				fmt.Println(i.Owner)
 			case "description", "desc", "body":
 				emitBody(i.Description)
-			case "design":
-				emitBody(i.Design)
 			case "accept", "acceptance", "acceptance_criteria":
 				emitBody(i.AcceptanceCriteria)
 			case "notes":
@@ -173,7 +170,7 @@ func newGetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&linesStr, "lines", "", "for description/design/accept/notes: 1-indexed range START-END, START-, -END, or N")
+	cmd.Flags().StringVar(&linesStr, "lines", "", "for description/accept/notes: 1-indexed range START-END, START-, -END, or N")
 	cmd.Flags().IntVar(&headN, "head", 0, "first N lines of the field (long-form fields only)")
 	cmd.Flags().IntVar(&tailN, "tail", 0, "last N lines of the field (long-form fields only)")
 	cmd.Flags().StringVar(&section, "section", "", "for description: extract one markdown ## section before slicing")
@@ -183,7 +180,7 @@ func newGetCmd() *cobra.Command {
 func getFieldNames() []string {
 	return []string{
 		"id", "title", "status", "priority", "type", "assignee", "owner",
-		"description", "design", "accept", "notes",
+		"description", "accept", "notes",
 		"parent", "deps", "rdeps", "labels", "comments-count",
 		"created_at", "updated_at", "closed_at", "close_reason",
 	}

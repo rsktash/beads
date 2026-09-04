@@ -30,7 +30,7 @@ import (
 //	label  rm  <id> <label>
 //	comment <id> "text"
 //
-// `key` for create/update is one of: title, desc, design, accept, notes,
+// `key` for create/update is one of: title, desc, accept, notes,
 // status, priority, type, assignee, owner, due, defer, ephemeral. Tokens are
 // whitespace-separated; double-quote a token to include spaces (\" and \\
 // escape).
@@ -249,8 +249,6 @@ func applyKV(i *beads.Issue, kv string) error {
 		i.Title = v
 	case "desc", "description":
 		i.Description = v
-	case "design":
-		i.Design = v
 	case "accept", "acceptance":
 		i.AcceptanceCriteria = v
 	case "notes":
@@ -312,9 +310,6 @@ func applyUpdateKV(u *store.IssueUpdate, kv string) error {
 	case "desc", "description":
 		s := v
 		u.Description = &s
-	case "design":
-		s := v
-		u.Design = &s
 	case "accept", "acceptance":
 		s := v
 		u.AcceptanceCriteria = &s
