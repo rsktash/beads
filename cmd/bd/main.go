@@ -72,6 +72,7 @@ func newRoot() *cobra.Command {
 		newPlanCmd(),
 		newSessionCmd(),
 		newTopicsCmd(),
+		newAuthorityCmd(),
 	)
 	return root
 }
