@@ -480,7 +480,13 @@ func briefQuestionRows(res store.BriefResult, expand map[string]bool, cc *cmdCtx
 			line += "  " + padTopicCell(answer, answerW)
 		}
 		line += "  " + headlineText(q.Text)
-		rows = append(rows, briefRow{line: line, extra: append(briefCitationLines(cc, q.ID, q.Text), briefExpansion(q, expand, cc, tr)...)})
+		extra := append(briefCitationLines(cc, q.ID, q.Text), briefExpansion(q, expand, cc, tr)...)
+		if note := questionExpiryNote(q, time.Now().UTC(), defaultStaleDays); note != "" {
+			marker, command := expiryNoteParts(note)
+			line += "  " + marker
+			extra = append([]string{command}, extra...)
+		}
+		rows = append(rows, briefRow{line: line, extra: extra})
 	}
 	return rows
 }

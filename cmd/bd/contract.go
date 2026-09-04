@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rsktash/beads"
 	"github.com/rsktash/beads/store"
@@ -70,7 +71,14 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 	if len(cv.Questions) > 0 {
 		fmt.Fprintln(w, "\nOPEN QUESTIONS — EXECUTION BLOCKERS")
 		for _, q := range cv.Questions {
-			fmt.Fprintf(w, "  %s  %s  %s  %s\n", q.ID, q.CreatedAt.Format("2006-01-02"), authorColumn(q.FiledBy), q.Text)
+			line := fmt.Sprintf("  %s  %s  %s  %s", q.ID, q.CreatedAt.Format("2006-01-02"), authorColumn(q.FiledBy), q.Text)
+			if note := questionExpiryNote(q, time.Now().UTC(), defaultStaleDays); note != "" {
+				marker, command := expiryNoteParts(note)
+				fmt.Fprintf(w, "%s  %s\n", line, marker)
+				fmt.Fprintln(w, "        "+command)
+				continue
+			}
+			fmt.Fprintln(w, line)
 		}
 	}
 	if len(cv.ClosedQuestions) > 0 {
