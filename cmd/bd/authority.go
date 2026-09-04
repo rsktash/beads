@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -120,7 +121,7 @@ RELATED never reads a transcript. It prints the hit command for you to run.`,
 				return refuseMissingConcern(cc, cmd.ErrOrStderr())
 			}
 
-			req.Since, err = resolveBriefSince(cc, since, req.IssueID)
+			req.Since, req.SinceLabel, err = resolveBriefSince(cc, since, req.IssueID)
 			if err != nil {
 				return err
 			}
@@ -208,48 +209,66 @@ func briefConcernNames(cc *cmdCtx) ([]string, error) {
 // resolveBriefSince turns --since into an instant. "handoff" is the newest
 // handoff on the bead's lane; with no plan and no handoff it is an error
 // naming the flag, never a silent full history.
-func resolveBriefSince(cc *cmdCtx, raw, issueID string) (time.Time, error) {
+func resolveBriefSince(cc *cmdCtx, raw, issueID string) (time.Time, string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return time.Time{}, nil
+		return time.Time{}, "", nil
 	}
 	if raw == "handoff" {
 		if issueID == "" {
-			return time.Time{}, fmt.Errorf("--since handoff needs a bead id: a words query is in no lane")
+			return time.Time{}, "", fmt.Errorf("--since handoff needs a bead id: a words query is in no lane")
 		}
-		at, ok, err := cc.store.LastHandoffForBead(cc.ctx, issueID)
+		at, lane, ok, err := cc.store.LastHandoffForBead(cc.ctx, issueID)
 		if err != nil {
-			return time.Time{}, err
+			var ambiguous *store.ErrTwoActivePlans
+			if errors.As(err, &ambiguous) {
+				return time.Time{}, "", fmt.Errorf("--since handoff is ambiguous: plans %s and %s are both active", ambiguous.A, ambiguous.B)
+			}
+			return time.Time{}, "", err
 		}
 		if !ok {
-			return time.Time{}, fmt.Errorf("--since handoff: %s is in no execution plan lane that has been handed off", issueID)
+			if lane != "" {
+				return time.Time{}, "", fmt.Errorf("--since handoff: lane %s has no handoff", lane)
+			}
+			return time.Time{}, "", fmt.Errorf("--since handoff: %s is in no execution plan lane that has been handed off", issueID)
 		}
-		return at, nil
+		label := fmt.Sprintf("since %s — lane %s handoff", at.UTC().Format("2006-01-02 15:04"), lane)
+		return at, label, nil
 	}
-	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04", "2006-01-02"} {
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
 		if t, err := time.Parse(layout, raw); err == nil {
-			return t, nil
+			return t, "since " + t.UTC().Format("2006-01-02 15:04"), nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("invalid --since %q (YYYY-MM-DD, RFC3339, or handoff)", raw)
+	return time.Time{}, "", fmt.Errorf("--since takes YYYY-MM-DD, an RFC3339 timestamp, or the word handoff")
 }
 
 // renderBrief writes the seven labelled sections in their fixed order.
 func renderBrief(w io.Writer, cc *cmdCtx, res store.BriefResult, req store.BriefRequest, expand map[string]bool) {
 	writeBriefLine(w, "BRIEF", briefHeaderLine(res, req))
 
-	writeBriefSection(w, "RULINGS", briefRulingRows(res, expand, cc),
-		briefRulingsCap, briefMoreCmd("bd rulings", res.IssueID))
-	writeBriefSection(w, "TOPIC", briefTopicRows(res), briefTopicsCap, briefTopicsCmd(res))
-	writeBriefSection(w, "QUESTIONS", briefQuestionRows(res, expand, cc),
-		briefQuestionsCap, briefMoreCmd("bd question list", res.IssueID))
-	writeBriefSection(w, "FINDINGS", briefFindingRows(res, expand, cc),
-		briefFindingsCap, briefMoreCmd("bd show", res.IssueID))
-	writeBriefDoctrine(w, res, expand, cc)
+	if req.Wants(store.BriefKindRulings) {
+		writeBriefSection(w, "RULINGS", briefRulingRows(res, expand, cc),
+			briefRulingsCap, briefMoreCmd("bd rulings", res.IssueID), req.SinceLabel)
+	}
+	if len(req.Kinds) == 0 {
+		writeBriefSection(w, "TOPIC", briefTopicRows(res), briefTopicsCap, briefTopicsCmd(res), req.SinceLabel)
+	}
+	if req.Wants(store.BriefKindQuestions) {
+		writeBriefSection(w, "QUESTIONS", briefQuestionRows(res, expand, cc),
+			briefQuestionsCap, briefMoreCmd("bd question list", res.IssueID), req.SinceLabel)
+	}
+	if req.Wants(store.BriefKindFindings) {
+		writeBriefSection(w, "FINDINGS", briefFindingRows(res, expand, cc),
+			briefFindingsCap, briefMoreCmd("bd show", res.IssueID), req.SinceLabel)
+	}
+	if req.Wants(store.BriefKindDoctrine) {
+		writeBriefDoctrine(w, res, expand, cc, req.SinceLabel)
+	}
 	writeBriefRelated(w, res, req)
-	if len(res.Comments) > 0 {
+	if req.Wants(store.BriefKindComments) && (len(res.Comments) > 0 || req.SinceLabel != "") {
 		writeBriefSection(w, "COMMENTS", briefCommentRows(res), briefCommentsCap,
-			briefMoreCmd("bd comment list", res.IssueID))
+			briefMoreCmd("bd comment list", res.IssueID), req.SinceLabel)
 	}
 }
 
@@ -259,16 +278,23 @@ func writeBriefLine(w io.Writer, label, line string) {
 
 // writeBriefSection prints one section: its rows down to the cap, the lines
 // --expand opened, and the count of what the cap dropped.
-func writeBriefSection(w io.Writer, label string, rows []briefRow, limit int, moreCmd string) {
-	if len(rows) == 0 {
+func writeBriefSection(w io.Writer, label string, rows []briefRow, limit int, moreCmd, sinceLabel string) {
+	if len(rows) == 0 && sinceLabel == "" {
 		return
+	}
+	if sinceLabel != "" {
+		writeBriefLine(w, label, "("+sinceLabel+")")
+		if len(rows) == 0 {
+			writeBriefLine(w, "", "(nothing since the window)")
+			return
+		}
 	}
 	shown := rows
 	if limit > 0 && len(rows) > limit {
 		shown = rows[:limit]
 	}
 	for i, r := range shown {
-		if i == 0 {
+		if i == 0 && sinceLabel == "" {
 			writeBriefLine(w, label, r.line)
 		} else {
 			writeBriefLine(w, "", r.line)
@@ -414,7 +440,7 @@ func briefTopicRows(res store.BriefResult) []briefRow {
 // writeBriefDoctrine prints the laws over this bead's areas — ruling id,
 // concern, law — and reports every other active law as a count. A law column
 // nothing writes yet falls back to the ruling's own headline.
-func writeBriefDoctrine(w io.Writer, res store.BriefResult, expand map[string]bool, cc *cmdCtx) {
+func writeBriefDoctrine(w io.Writer, res store.BriefResult, expand map[string]bool, cc *cmdCtx, sinceLabel string) {
 	idW, concernW := 0, 0
 	for _, d := range res.Doctrine {
 		idW = max(idW, len(d.ID))
@@ -432,10 +458,10 @@ func writeBriefDoctrine(w io.Writer, res store.BriefResult, expand map[string]bo
 			extra: briefExpansionByID(cc, d.ID, expand, d.Text, "", d.Law),
 		})
 	}
-	writeBriefSection(w, "DOCTRINE", rows, briefDoctrineCap, "bd rulings --scope project")
+	writeBriefSection(w, "DOCTRINE", rows, briefDoctrineCap, "bd rulings --scope project", sinceLabel)
 	if res.DoctrineOutside > 0 {
 		label := ""
-		if len(rows) == 0 {
+		if len(rows) == 0 && sinceLabel == "" {
 			label = "DOCTRINE"
 		}
 		noun := "laws"
@@ -477,15 +503,18 @@ func writeBriefRelated(w io.Writer, res store.BriefResult, req store.BriefReques
 	if len(shown) > briefRelatedCap {
 		shown = shown[:briefRelatedCap]
 	}
+	if req.SinceLabel != "" {
+		writeBriefLine(w, "RELATED", "("+req.SinceLabel+")")
+	}
 	for i, r := range shown {
-		if i == 0 {
+		if i == 0 && req.SinceLabel == "" {
 			writeBriefLine(w, "RELATED", r.line)
 		} else {
 			writeBriefLine(w, "", r.line)
 		}
 	}
 	label := ""
-	if len(shown) == 0 {
+	if len(shown) == 0 && req.SinceLabel == "" {
 		label = "RELATED"
 	}
 	writeBriefLine(w, label, briefTranscriptLine(res.Query, res.IssueID))

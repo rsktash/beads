@@ -25,6 +25,17 @@ type ExecutionPlan struct {
 	CreatedBy string    `json:"created_by,omitempty"`
 }
 
+// ErrTwoActivePlans reports an invalid execution state without choosing which
+// plan should govern the caller. Callers own the wording for their command.
+type ErrTwoActivePlans struct {
+	A string
+	B string
+}
+
+func (e *ErrTwoActivePlans) Error() string {
+	return fmt.Sprintf("plans %s and %s are both active", e.A, e.B)
+}
+
 // PlanLane is one concurrent slice of a plan.
 type PlanLane struct {
 	PlanID    string     `json:"plan_id"`
@@ -140,6 +151,36 @@ func (s *Store) GetPlan(ctx context.Context, id string) (*ExecutionPlan, error) 
 		return nil, err
 	}
 	return &p, nil
+}
+
+// ActivePlan returns the single active execution plan. No active plan is not
+// an error; more than one is an invalid state that the caller must resolve.
+func (s *Store) ActivePlan(ctx context.Context) (*ExecutionPlan, error) {
+	q := s.rebind(`SELECT id, title, status, preflight, created_at, created_by FROM execution_plan WHERE status = 'active' ORDER BY id LIMIT 2`)
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var plans []ExecutionPlan
+	for rows.Next() {
+		var p ExecutionPlan
+		if err := rows.Scan(&p.ID, &p.Title, &p.Status, &p.Preflight, &p.CreatedAt, &p.CreatedBy); err != nil {
+			return nil, err
+		}
+		plans = append(plans, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(plans) == 0 {
+		return nil, nil
+	}
+	if len(plans) == 2 {
+		return nil, &ErrTwoActivePlans{A: plans[0].ID, B: plans[1].ID}
+	}
+	return &plans[0], nil
 }
 
 // DeletePlan removes a plan; lanes, sessions and handoffs cascade.
@@ -356,6 +397,21 @@ func (s *Store) ListHandoffs(ctx context.Context, planID string) ([]PlanHandoff,
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// LastHandoffAt returns the newest handoff instant for one plan lane. A lane
+// with no handoff has a nil instant and no error.
+func (s *Store) LastHandoffAt(ctx context.Context, planID, lane string) (*time.Time, error) {
+	q := s.rebind(`SELECT created_at FROM plan_handoff WHERE plan_id = ? AND lane = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
+	var at time.Time
+	err := s.db.QueryRowContext(ctx, q, planID, lane).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &at, nil
 }
 
 // LastHandoffPerLane keys a plan's most recent handoff entry by lane.

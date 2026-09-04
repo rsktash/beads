@@ -64,6 +64,8 @@ type BriefRequest struct {
 	Author string
 	// Since drops every record older than this instant.
 	Since time.Time
+	// SinceLabel is the render-only description shown on section headers.
+	SinceLabel string
 	// Depth caps link hops in RELATED; 0 means the default of one.
 	Depth int
 	// Grep filters the built sections by case-insensitive substring.
@@ -335,6 +337,7 @@ func briefEnrich(dst *beads.Statement, src beads.Statement) {
 	dst.Topic, dst.Workspace, dst.Concern = src.Topic, src.Workspace, src.Concern
 	dst.Law, dst.Rationale, dst.Author = src.Law, src.Rationale, src.Author
 	dst.Status, dst.SupersedesID, dst.AnsweredBy = src.Status, src.SupersedesID, src.AnsweredBy
+	dst.ChangedAt = src.ChangedAt
 	if dst.Verbatim == "" {
 		dst.Verbatim = src.Verbatim
 	}
@@ -611,7 +614,11 @@ func briefKeepStatement(req BriefRequest, st beads.Statement) bool {
 	if req.Author != "" && !briefAuthorMatches(req.Author, st.FiledBy) {
 		return false
 	}
-	if !req.Since.IsZero() && st.CreatedAt.Before(req.Since) {
+	windowAt := st.CreatedAt
+	if st.ChangedAt != nil {
+		windowAt = *st.ChangedAt
+	}
+	if !req.Since.IsZero() && windowAt.Before(req.Since) {
 		return false
 	}
 	if req.Grep != "" && !briefGrepHit(req.Grep, st.Law, st.Text) {
@@ -706,49 +713,34 @@ func SignificantWords(s string) []string {
 }
 
 // LastHandoffForBead is what `--since handoff` resolves to: the newest handoff
-// on the lane whose queue holds the bead. ok is false when the bead is in no
-// lane, or in a lane nobody has handed off yet — the caller reports that as an
-// error naming the flag rather than falling back to full history.
-func (s *Store) LastHandoffForBead(ctx context.Context, issueID string) (at time.Time, ok bool, err error) {
-	rows, err := s.db.QueryContext(ctx, s.rebind(`SELECT plan_id, lane, queue FROM plan_lane`))
+// on the bead's lane in the single active plan. lane is returned even when it
+// has no handoff so the caller can name the missing handoff precisely.
+func (s *Store) LastHandoffForBead(ctx context.Context, issueID string) (at time.Time, lane string, ok bool, err error) {
+	plan, err := s.ActivePlan(ctx)
 	if err != nil {
-		return time.Time{}, false, err
+		return time.Time{}, "", false, err
 	}
-	type laneKey struct{ plan, lane string }
-	var lanes []laneKey
-	for rows.Next() {
-		var k laneKey
-		var queue string
-		if err := rows.Scan(&k.plan, &k.lane, &queue); err != nil {
-			rows.Close()
-			return time.Time{}, false, err
-		}
-		for _, id := range splitList(queue) {
-			if id == issueID {
-				lanes = append(lanes, k)
-				break
-			}
-		}
+	if plan == nil {
+		return time.Time{}, "", false, nil
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return time.Time{}, false, err
+	lanes, err := s.ListLanes(ctx, plan.ID)
+	if err != nil {
+		return time.Time{}, "", false, err
 	}
-	rows.Close()
-
-	for _, k := range lanes {
-		hs, err := s.ListHandoffs(ctx, k.plan)
-		if err != nil {
-			return time.Time{}, false, err
-		}
-		for _, h := range hs {
-			if h.Lane != k.lane {
+	for _, candidate := range lanes {
+		for _, id := range candidate.Queue {
+			if id != issueID {
 				continue
 			}
-			if h.CreatedAt.After(at) {
-				at, ok = h.CreatedAt, true
+			at, err := s.LastHandoffAt(ctx, plan.ID, candidate.Lane)
+			if err != nil {
+				return time.Time{}, candidate.Lane, false, err
 			}
+			if at == nil {
+				return time.Time{}, candidate.Lane, false, nil
+			}
+			return *at, candidate.Lane, true, nil
 		}
 	}
-	return at, ok, nil
+	return time.Time{}, "", false, nil
 }

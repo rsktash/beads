@@ -479,7 +479,8 @@ func TestAuthority_SinceHandoffResolvesTheLanesNewestHandoff(t *testing.T) {
 	bead := mkAuthIssue(t, st, "in a lane", "## Files\n- server/src/auth.ts\n")
 
 	old := time.Now().UTC().Add(-72 * time.Hour)
-	mkAuthStatement(t, st, authStatement{kind: "ruling", issueID: bead.ID, topic: "before", text: "filed before the handoff", createdAt: old})
+	oldRow := mkAuthStatement(t, st, authStatement{kind: "ruling", issueID: bead.ID, topic: "before", text: "filed before the handoff", createdAt: old})
+	setStatementChangedAt(t, st, oldRow.ID, &old)
 
 	if err := st.CreatePlan(ctx, &store.ExecutionPlan{ID: "plan-1", Title: "a plan"}); err != nil {
 		t.Fatalf("create plan: %v", err)
