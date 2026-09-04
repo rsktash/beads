@@ -15,6 +15,7 @@ facts live in the bead; this file never restates a contract.
 - Executors: `export BD_ACTOR=executor` before any bd write. `bd workfile <id>` writes the body to `.bd/.scratch/<id>.md` and prints the header (rulings, findings, sections).
 - Never pipe a bd read into `head`, `tail`, `cut` or `grep`; read the whole block, `--section <slug>`, or `--json`.
 - Scratch files go in `.bd/.scratch/` only.
+- Smoke-testing a built `bd` binary: ALWAYS pass an explicit throwaway DSN — `BD_DB=/tmp/<task>.sqlite ./bd …` or `--db /tmp/<task>.sqlite` (the variable is `BD_DB`, see `internal/config/config.go`). A bare run resolves the DSN from the cwd's `.bd/config` and writes into a real shared tracker; on 2026-09-04 one such run left junk beads in the zanjir tracker.
 
 ## Tests and gate
 
