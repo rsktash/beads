@@ -1364,29 +1364,103 @@ func (s *Store) AddComment(ctx context.Context, c *beads.Comment) error {
 }
 
 func (s *Store) ListComments(ctx context.Context, issueID string) ([]beads.Comment, error) {
-	switch s.driver {
-	case DriverSQLite:
-		rows, err := s.sqlite.ListComments(ctx, issueID)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]beads.Comment, 0, len(rows))
-		for _, r := range rows {
-			out = append(out, beads.Comment{ID: r.ID, IssueID: r.IssueID, Author: r.Author, Text: r.Text, CreatedAt: r.CreatedAt})
-		}
-		return out, nil
-	case DriverPostgres:
-		rows, err := s.pg.ListComments(ctx, issueID)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]beads.Comment, 0, len(rows))
-		for _, r := range rows {
-			out = append(out, beads.Comment{ID: r.ID, IssueID: r.IssueID, Author: r.Author, Text: r.Text, CreatedAt: r.CreatedAt})
-		}
-		return out, nil
+	q := s.rebind(`SELECT ` + commentSelectColumns + ` FROM comments WHERE issue_id = ? AND retracted_at IS NULL ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, q, issueID)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("unknown driver")
+	return scanCommentRows(rows)
+}
+
+// ListCommentsIncludingRetracted is the whole-record reader for
+// `bd comment list --include-retracted` and `--json`: a machine reader must
+// be able to see the retracted rows with their three mark fields.
+func (s *Store) ListCommentsIncludingRetracted(ctx context.Context, issueID string) ([]beads.Comment, error) {
+	q := s.rebind(`SELECT ` + commentSelectColumns + ` FROM comments WHERE issue_id = ? ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, q, issueID)
+	if err != nil {
+		return nil, err
+	}
+	return scanCommentRows(rows)
+}
+
+// commentSelectColumns is the raw-SQL column list for both comment readers,
+// kept in lockstep with scanCommentRows. The three retract columns are read
+// here, never through internal/db: `comments` stays sqlc-generated without
+// them, the same raw-SQL rule every new column follows.
+const commentSelectColumns = `id, issue_id, author, text, created_at, retracted_at, retracted_by, retract_note`
+
+func scanCommentRows(rows *sql.Rows) ([]beads.Comment, error) {
+	defer rows.Close()
+	out := make([]beads.Comment, 0, 8)
+	for rows.Next() {
+		var c beads.Comment
+		var retractedAt sql.NullTime
+		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt, &retractedAt, &c.RetractedBy, &c.RetractNote); err != nil {
+			return nil, err
+		}
+		if retractedAt.Valid {
+			c.RetractedAt = &retractedAt.Time
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// RetractComment marks a comment retracted in place — the text is never
+// modified, the row never deleted — and bumps the comment's bead in the same
+// transaction. A zero-row UPDATE means the id is unknown or already
+// retracted; the row is read back inside the transaction to tell the two
+// apart.
+func (s *Store) RetractComment(ctx context.Context, id, by, note string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	at := time.Now().UTC()
+	q := s.rebind(`UPDATE comments SET retracted_at = ?, retracted_by = ?, retract_note = ? WHERE id = ? AND retracted_at IS NULL`)
+	res, err := tx.ExecContext(ctx, q, at, by, note, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var retractedAt sql.NullTime
+		qr := s.rebind(`SELECT retracted_at FROM comments WHERE id = ?`)
+		if err := tx.QueryRowContext(ctx, qr, id).Scan(&retractedAt); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: comment %s", ErrNotFound, id)
+			}
+			return err
+		}
+		if retractedAt.Valid {
+			return fmt.Errorf("comment %s is already retracted", id)
+		}
+		return fmt.Errorf("comment %s could not be retracted", id)
+	}
+
+	var issueID string
+	qi := s.rebind(`SELECT issue_id FROM comments WHERE id = ?`)
+	if err := tx.QueryRowContext(ctx, qi, id).Scan(&issueID); err != nil {
+		return err
+	}
+	if issueID != "" {
+		if err := touchIssueTx(ctx, tx, s, issueID, at); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // ---------- memories ----------
