@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/rsktash/beads/internal/config"
 	"github.com/rsktash/beads/store"
 )
 
@@ -253,8 +255,9 @@ nothing was recorded or the transcript is not on this machine.`,
 			}
 			defer cc.store.Close()
 
+			statement := isStatementID(id)
 			var p store.ProvenancePointer
-			if isStatementID(id) {
+			if statement {
 				p, err = cc.store.StatementPointer(cc.ctx, id)
 			} else {
 				p, err = cc.store.CommentPointer(cc.ctx, id)
@@ -264,39 +267,106 @@ nothing was recorded or the transcript is not on this machine.`,
 			}
 
 			out := cmd.OutOrStdout()
-			if p.SessionID == "" {
-				fmt.Fprintln(out, "source: none recorded")
-				return nil
-			}
-
-			path, err := transcriptPath(p.SessionID)
-			if err != nil {
+			if err := writeRecordedSource(out, p); err != nil {
 				return err
 			}
-			f, err := os.Open(path)
-			if err != nil {
-				fmt.Fprintf(out, "source: session %s — transcript not on this machine\n", p.SessionID)
-				return nil
+			if statement {
+				return writeCitationRecovery(cmd, cc, out, id)
 			}
-			defer f.Close()
-
-			hit := scanTranscript(f, p)
-
-			head := "source: session " + p.SessionID
-			if stamp := formatStamp(hit.timestamp); stamp != "" {
-				head += "  " + stamp
-			}
-			fmt.Fprintln(out, head)
-			if hit.found {
-				fmt.Fprintf(out, "owner said: %q\n", hit.owner)
-			} else {
-				fmt.Fprintln(out, "owner said: (no owner message in the records before the tool call)")
-			}
-			fmt.Fprintf(out, "grep: rg -n '%s' %s\n", shortSession(p.SessionID), path)
 			return nil
 		},
 	}
 	return cmd
+}
+
+func writeRecordedSource(out io.Writer, p store.ProvenancePointer) error {
+	if p.SessionID == "" {
+		fmt.Fprintln(out, "source: none recorded")
+		return nil
+	}
+	path, err := transcriptPath(p.SessionID)
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(out, "source: session %s — transcript not on this machine\n", p.SessionID)
+		return nil
+	}
+	defer f.Close()
+
+	hit := scanTranscript(f, p)
+	head := "source: session " + p.SessionID
+	if stamp := formatStamp(hit.timestamp); stamp != "" {
+		head += "  " + stamp
+	}
+	fmt.Fprintln(out, head)
+	if hit.found {
+		fmt.Fprintf(out, "owner said: %q\n", hit.owner)
+	} else {
+		fmt.Fprintln(out, "owner said: (no owner message in the records before the tool call)")
+	}
+	fmt.Fprintf(out, "grep: rg -n '%s' %s\n", shortSession(p.SessionID), path)
+	return nil
+}
+
+func writeCitationRecovery(cmd *cobra.Command, cc *cmdCtx, out io.Writer, id string) error {
+	statement, err := cc.store.GetStatement(cc.ctx, id)
+	if err != nil {
+		return err
+	}
+	text := statement.Text
+	if statement.Evidence != "" {
+		text += "\n" + statement.Evidence
+	}
+	citations := store.ParseCitations(text)
+	if len(citations) == 0 {
+		return nil
+	}
+	cfg, err := config.Resolve(flagDB)
+	if err != nil {
+		return err
+	}
+	for _, citation := range citations {
+		state, err := store.ResolveCitation(cfg.ProjectRoot, citation)
+		if err != nil {
+			return err
+		}
+		if state.Status != store.CitationStale {
+			continue
+		}
+		sha, err := cc.store.StatementHeadSHA(cc.ctx, id)
+		if err != nil {
+			return err
+		}
+		if sha == "" {
+			fmt.Fprintf(out, "no HEAD recorded for %s\n", id)
+			continue
+		}
+		git := exec.CommandContext(cmd.Context(), "git", "show", sha+":"+citation.Path)
+		git.Dir = cfg.ProjectRoot
+		content, err := git.Output()
+		if err != nil {
+			return fmt.Errorf("recover %s: %w", citation.String(), err)
+		}
+		writeHistoricalCitation(out, content, citation)
+	}
+	return nil
+}
+
+func writeHistoricalCitation(out io.Writer, content []byte, citation store.Citation) {
+	if citation.Line == 0 {
+		if declaration, ok := store.CitationDeclaration(content, citation); ok {
+			fmt.Fprintln(out, declaration)
+		}
+		return
+	}
+	lines := strings.Split(string(content), "\n")
+	start := max(0, citation.Line-11)
+	end := min(len(lines), start+20)
+	for _, line := range lines[start:end] {
+		fmt.Fprintln(out, line)
+	}
 }
 
 // shortSession is the session id prefix that is enough to grep with.

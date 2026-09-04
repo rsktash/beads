@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/rsktash/beads"
+	"github.com/rsktash/beads/internal/config"
 	"github.com/rsktash/beads/store"
 )
 
@@ -105,6 +107,9 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 			}
 			if text == "" {
 				return fmt.Errorf("text is required")
+			}
+			if path, line, ok := store.BareLineCitation(text); ok {
+				return fmt.Errorf("cite the symbol: %s::<symbol>:%d, not %s:%d", path, line, path, line)
 			}
 
 			// A doctrine is a project law. An issue id would file it on a
@@ -242,6 +247,9 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 			if err != nil {
 				return err
 			}
+			if err := stampStatementHeadSHA(cc, st.ID); err != nil {
+				return err
+			}
 
 			// Print new id to caller's stdout (cobra managed)
 			fmt.Fprintln(cmd.OutOrStdout(), st.ID)
@@ -262,6 +270,24 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 	cmd.Flags().StringVar(&law, "law", "", "the law itself: one imperative sentence ending in a full stop (max 200 characters)")
 	cmd.Flags().StringVar(&rationale, "rationale", "", "why the law holds, and the pointers behind it (max 600 characters)")
 	return cmd
+}
+
+func stampStatementHeadSHA(cc *cmdCtx, id string) error {
+	cfg, err := config.Resolve(flagDB)
+	if err != nil || cfg.ProjectRoot == "" {
+		return nil
+	}
+	git := exec.CommandContext(cc.ctx, "git", "rev-parse", "HEAD")
+	git.Dir = cfg.ProjectRoot
+	out, err := git.Output()
+	if err != nil {
+		return nil
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		return nil
+	}
+	return cc.store.SetStatementHeadSHA(cc.ctx, id, sha)
 }
 
 // printExistingRulingsAndCheckDuplicate lists the set a new ruling would
