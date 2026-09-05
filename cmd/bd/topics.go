@@ -73,6 +73,7 @@ project-scoped ruling on it. Dormant topics are hidden unless --all.
 	root.Flags().BoolVar(&all, "all", false, "include dormant topics")
 	root.AddCommand(newTopicsRenameCmd())
 	root.AddCommand(newTopicsMergeCmd())
+	root.AddCommand(newTopicsRetopicCmd())
 	root.AddCommand(newTopicsSlugifyCmd())
 	return root
 }
@@ -288,6 +289,42 @@ Actor gating: BD_ACTOR=executor is refused.`,
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "renamed %s -> %s (%d statements)\n", oldSlug, newSlug, n)
+			return nil
+		},
+	}
+	return cmd
+}
+
+func newTopicsRetopicCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "retopic <statement-id> <new-topic>",
+		Short: "Move one statement to a different topic (actor-gated)",
+		Long: `Move a single question, finding or ruling to a new slug. Every sibling
+statement still carrying the old slug is untouched — moving every statement on
+a slug is rename or merge.
+
+Actor gating: BD_ACTOR=executor is refused.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			identity, isExecutor := resolveActor()
+			if isExecutor {
+				return executorRefusal(identity)
+			}
+			id, newSlug := strings.TrimSpace(args[0]), strings.TrimSpace(args[1])
+			if err := validateTopicSlug("topic", newSlug); err != nil {
+				return err
+			}
+			cc, err := openStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer cc.store.Close()
+
+			oldSlug, err := cc.store.RetopicStatement(cc.ctx, id, newSlug)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "retopiced %s: %s -> %s\n", id, oldSlug, newSlug)
 			return nil
 		},
 	}

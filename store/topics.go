@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -335,6 +336,28 @@ func (s *Store) moveTopic(ctx context.Context, from, into string) (int64, error)
 		return 0, fmt.Errorf("topic %q: %w", from, ErrNotFound)
 	}
 	return n, nil
+}
+
+// RetopicStatement moves a single statement to a new slug and returns the
+// slug it carried before the move. Every sibling statement still carrying the
+// old slug is untouched — that whole-slug move is RenameTopic or MergeTopics.
+// It refuses an id no statement row has.
+func (s *Store) RetopicStatement(ctx context.Context, id, newSlug string) (string, error) {
+	id, newSlug = strings.TrimSpace(id), strings.TrimSpace(newSlug)
+	if id == "" || newSlug == "" {
+		return "", fmt.Errorf("statement id and new slug are required")
+	}
+	st, err := s.GetStatement(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return "", fmt.Errorf("statement %q: %w", id, ErrNotFound)
+		}
+		return "", err
+	}
+	if _, err := s.db.ExecContext(ctx, s.rebind(`UPDATE statements SET topic = ? WHERE id = ?`), newSlug, id); err != nil {
+		return "", err
+	}
+	return st.Topic, nil
 }
 
 func (s *Store) topicExists(ctx context.Context, slug string) (bool, error) {

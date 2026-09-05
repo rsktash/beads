@@ -610,6 +610,88 @@ func TestTopics_MergeCountsRows(t *testing.T) {
 	}
 }
 
+// --- retopic ---
+
+func TestTopics_RetopicMovesNamedStatement(t *testing.T) {
+	st := newTempTopicsStore(t)
+	issue := mkTopicsIssue(t, st, "retopic", "")
+	target := mkTopicStatement(t, st, "question", issue.ID, "slug-old", "server", "authority")
+
+	out, _, err := runTopicsRoot(t, "topics", "retopic", target.ID, "slug-new")
+	if err != nil {
+		t.Fatalf("retopic: %v", err)
+	}
+	if !strings.Contains(out, target.ID) || !strings.Contains(out, "slug-old") || !strings.Contains(out, "slug-new") {
+		t.Fatalf("retopic should report the statement id and both slugs, got %q", out)
+	}
+	if got := getTopicStatement(t, st, target.ID).Topic; got != "slug-new" {
+		t.Fatalf("the named statement should carry the new slug, got %q", got)
+	}
+}
+
+func TestTopics_RetopicLeavesSiblingUntouched(t *testing.T) {
+	st := newTempTopicsStore(t)
+	issue := mkTopicsIssue(t, st, "retopic siblings", "")
+	target := mkTopicStatement(t, st, "question", issue.ID, "slug-old", "server", "authority")
+	sibling := mkTopicStatement(t, st, "ruling", issue.ID, "slug-old", "server", "authority")
+
+	if _, _, err := runTopicsRoot(t, "topics", "retopic", target.ID, "slug-new"); err != nil {
+		t.Fatalf("retopic: %v", err)
+	}
+	if got := getTopicStatement(t, st, sibling.ID).Topic; got != "slug-old" {
+		t.Fatalf("the sibling should keep the old slug, got %q", got)
+	}
+}
+
+func TestTopics_RetopicRefusesUnknownID(t *testing.T) {
+	st := newTempTopicsStore(t)
+	issue := mkTopicsIssue(t, st, "unknown id", "")
+	keep := mkTopicStatement(t, st, "question", issue.ID, "slug-old", "server", "authority")
+
+	_, _, err := runTopicsRoot(t, "topics", "retopic", "bd-999999", "slug-new")
+	if err == nil {
+		t.Fatalf("retopic of an unknown statement id should be refused")
+	}
+	if got := getTopicStatement(t, st, keep.ID).Topic; got != "slug-old" {
+		t.Fatalf("the refused retopic should have moved nothing, got %q", got)
+	}
+}
+
+func TestTopics_RetopicRefusesInvalidSlug(t *testing.T) {
+	st := newTempTopicsStore(t)
+	issue := mkTopicsIssue(t, st, "invalid slug", "")
+	target := mkTopicStatement(t, st, "question", issue.ID, "slug-old", "server", "authority")
+
+	_, _, err := runTopicsRoot(t, "topics", "retopic", target.ID, "Not A Slug")
+	if err == nil {
+		t.Fatalf("a target slug outside the grammar should be refused")
+	}
+	if !strings.Contains(err.Error(), "lowercase letters, digits and hyphens, 2-48 chars") {
+		t.Fatalf("error should name the character class, got %q", err)
+	}
+	if got := getTopicStatement(t, st, target.ID).Topic; got != "slug-old" {
+		t.Fatalf("the refused retopic should have moved nothing, got %q", got)
+	}
+}
+
+func TestTopics_RetopicRefusesExecutor(t *testing.T) {
+	st := newTempTopicsStore(t)
+	issue := mkTopicsIssue(t, st, "gated retopic", "")
+	target := mkTopicStatement(t, st, "question", issue.ID, "slug-old", "server", "authority")
+	t.Setenv("BD_ACTOR", "executor")
+
+	_, _, err := runTopicsRoot(t, "topics", "retopic", target.ID, "slug-new")
+	if err == nil {
+		t.Fatalf("an executor should not retopic a statement")
+	}
+	if !strings.Contains(err.Error(), "executors cannot file rulings") {
+		t.Fatalf("the refusal should be the shared one, got %q", err)
+	}
+	if got := getTopicStatement(t, st, target.ID).Topic; got != "slug-old" {
+		t.Fatalf("the refused retopic should have moved nothing, got %q", got)
+	}
+}
+
 func TestTopics_RenameRefusesExecutor(t *testing.T) {
 	st := newTempTopicsStore(t)
 	issue := mkTopicsIssue(t, st, "gated", "")
