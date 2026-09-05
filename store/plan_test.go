@@ -607,3 +607,51 @@ func TestFinishable_EveryLaneDoneOnAnActivePlan(t *testing.T) {
 		t.Fatal("an ended plan is no longer finishable")
 	}
 }
+
+func TestEndPlan_SurvivingPlanTakesOverTheSharedSlot(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	// The shared bead sits in both queues. While both plans are active the
+	// first in plan-id order owns the slot, so beta's queue renders with a
+	// gap; ending alpha must hand the slot over rather than orphan it.
+	for _, plan := range []struct {
+		id, lane string
+		queue    []string
+	}{
+		{"alpha-0905", "A", []string{"bd-a", "bd-shared"}},
+		{"beta-0905", "Z", []string{"bd-shared", "bd-b"}},
+	} {
+		if err := st.CreatePlan(ctx, &store.ExecutionPlan{ID: plan.id, Title: plan.id}); err != nil {
+			t.Fatalf("CreatePlan %s: %v", plan.id, err)
+		}
+		if err := st.AddLane(ctx, &store.PlanLane{PlanID: plan.id, Lane: plan.lane, Queue: plan.queue}); err != nil {
+			t.Fatalf("AddLane %s: %v", plan.id, err)
+		}
+	}
+	_, slots, err := st.ActivePlanQueues(ctx)
+	if err != nil {
+		t.Fatalf("ActivePlanQueues: %v", err)
+	}
+	if got := slots["bd-shared"]; got != (store.QueueSlot{Plan: "alpha-0905", Lane: "A", Index: 2}) {
+		t.Fatalf("shared slot before the end = %+v, want alpha's A2", got)
+	}
+
+	if err := st.EndPlan(ctx, "alpha-0905", "abandoned", true); err != nil {
+		t.Fatalf("EndPlan: %v", err)
+	}
+	ids, slots, err := st.ActivePlanQueues(ctx)
+	if err != nil {
+		t.Fatalf("ActivePlanQueues: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "beta-0905" {
+		t.Fatalf("plan ids = %v, want only beta-0905", ids)
+	}
+	if got := slots["bd-shared"]; got != (store.QueueSlot{Plan: "beta-0905", Lane: "Z", Index: 1}) {
+		t.Fatalf("shared slot after the end = %+v, want beta's Z1", got)
+	}
+	// The ended plan's own bead keeps no slot: it is open work again, just
+	// unordered. Ending a plan is not closing its beads.
+	if got, ok := slots["bd-a"]; ok {
+		t.Fatalf("ended plan's bead kept slot %+v", got)
+	}
+}
