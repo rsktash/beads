@@ -27,6 +27,27 @@ func validateTopicSlug(label, slug string) error {
 	return nil
 }
 
+// nonSlugRunRE matches one or more characters outside [a-z0-9] in a row, so a
+// run of punctuation collapses to a single hyphen instead of one per character.
+var nonSlugRunRE = regexp.MustCompile(`[^a-z0-9]+`)
+
+// pendingTopicSlugPrefix marks a slug this function derived from a bead id
+// rather than one a writer typed, so the two never collide.
+const pendingTopicSlugPrefix = "pending-"
+
+// pendingTopicSlug derives the placeholder slug for a bead id: lowercase it,
+// fold every run of non-alphanumeric characters to one hyphen, prefix it, and
+// trim to topicSlugRE's 48-character ceiling. Two bead ids that only differ
+// in case or punctuation style land on the same slug, which is the point.
+func pendingTopicSlug(issueID string) string {
+	folded := nonSlugRunRE.ReplaceAllString(strings.ToLower(issueID), "-")
+	slug := pendingTopicSlugPrefix + folded
+	if len(slug) > 48 {
+		slug = slug[:48]
+	}
+	return slug
+}
+
 func newTopicsCmd() *cobra.Command {
 	var concern, workspace string
 	var all bool
@@ -52,6 +73,7 @@ project-scoped ruling on it. Dormant topics are hidden unless --all.
 	root.Flags().BoolVar(&all, "all", false, "include dormant topics")
 	root.AddCommand(newTopicsRenameCmd())
 	root.AddCommand(newTopicsMergeCmd())
+	root.AddCommand(newTopicsSlugifyCmd())
 	return root
 }
 
@@ -266,6 +288,22 @@ Actor gating: BD_ACTOR=executor is refused.`,
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "renamed %s -> %s (%d statements)\n", oldSlug, newSlug, n)
+			return nil
+		},
+	}
+	return cmd
+}
+
+func newTopicsSlugifyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "slugify <bead-id>",
+		Short: "Print the placeholder slug derived from a bead id",
+		Long: `Derive the pending- slug a caller would otherwise hand-roll, so bd is the
+one place that turns a bead id into a placeholder topic. This is pure string
+derivation: it opens no store and needs no actor.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), pendingTopicSlug(args[0]))
 			return nil
 		},
 	}

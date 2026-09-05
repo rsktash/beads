@@ -109,6 +109,88 @@ func countTopicStatements(t *testing.T, st *store.Store) int {
 	return len(list)
 }
 
+// --- the placeholder slug ---
+
+func TestSlugify_DottedHierarchicalID(t *testing.T) {
+	got := pendingTopicSlug("superpowers-bqp.8")
+	want := "pending-superpowers-bqp-8"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if err := validateTopicSlug("slug", got); err != nil {
+		t.Fatalf("derived slug %q fails validateTopicSlug: %v", got, err)
+	}
+}
+
+func TestSlugify_UppercaseID(t *testing.T) {
+	got := pendingTopicSlug("ZANJIR-4dly.3")
+	want := "pending-zanjir-4dly-3"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if err := validateTopicSlug("slug", got); err != nil {
+		t.Fatalf("derived slug %q fails validateTopicSlug: %v", got, err)
+	}
+}
+
+func TestSlugify_PunctuationRunCollapses(t *testing.T) {
+	got := pendingTopicSlug("beads-bin..1__sub")
+	want := "pending-beads-bin-1-sub"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if err := validateTopicSlug("slug", got); err != nil {
+		t.Fatalf("derived slug %q fails validateTopicSlug: %v", got, err)
+	}
+}
+
+func TestSlugify_TrimsToFortyEightChars(t *testing.T) {
+	got := pendingTopicSlug("superpowers-bqp.14.some-very-long-child-suffix-id")
+	want := "pending-superpowers-bqp-14-some-very-long-child-"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if len(got) != 48 {
+		t.Fatalf("expected 48 chars, got %d (%q)", len(got), got)
+	}
+	if err := validateTopicSlug("slug", got); err != nil {
+		t.Fatalf("derived slug %q fails validateTopicSlug: %v", got, err)
+	}
+}
+
+// setBogusFlagDB points --db at a path nothing can open, so a verb that
+// reaches openStore fails loudly instead of quietly succeeding on a real
+// fixture. slugify must derive its string without ever getting there.
+func setBogusFlagDB(t *testing.T) {
+	t.Helper()
+	oldDB, oldJSON := flagDB, flagJSON
+	flagDB, flagJSON = "/nonexistent/does-not-exist/beads.db", false
+	t.Cleanup(func() { flagDB, flagJSON = oldDB, oldJSON })
+}
+
+func TestTopics_SlugifyVerbPrintsSlug(t *testing.T) {
+	setBogusFlagDB(t)
+
+	out, _, err := runTopicsRoot(t, "topics", "slugify", "superpowers-bqp.8")
+	if err != nil {
+		t.Fatalf("slugify: %v", err)
+	}
+	if out != "pending-superpowers-bqp-8\n" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestTopics_SlugifyVerbRequiresOneArg(t *testing.T) {
+	setBogusFlagDB(t)
+
+	if _, _, err := runTopicsRoot(t, "topics", "slugify"); err == nil {
+		t.Fatalf("slugify with no argument should be a usage error")
+	}
+	if _, _, err := runTopicsRoot(t, "topics", "slugify", "one", "two"); err == nil {
+		t.Fatalf("slugify with two arguments should be a usage error")
+	}
+}
+
 // --- the write path ---
 
 func TestTopic_QuestionRequiresTopic(t *testing.T) {
