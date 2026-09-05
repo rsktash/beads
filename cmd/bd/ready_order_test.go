@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"text/tabwriter"
 	"time"
 
 	"github.com/rsktash/beads"
@@ -155,23 +157,97 @@ func TestReadyOrder_LaneColumnRendered(t *testing.T) {
 	}
 }
 
-func TestReadyOrder_TwoActivePlansError(t *testing.T) {
+func TestReadyOrder_TwoActivePlansUnion(t *testing.T) {
 	st := newReadyOrderStore(t)
-	readyOrderIssue(t, st, "ready-two-plans", "ready", 1, readyOrderEpoch)
-	readyOrderPlan(t, st, "plan-alpha", "active")
-	readyOrderPlan(t, st, "plan-beta", "active")
+	alpha := readyOrderIssue(t, st, "ready-u-alpha", "alpha lane bead", 3, readyOrderEpoch.Add(time.Minute))
+	beta := readyOrderIssue(t, st, "ready-u-beta", "beta lane bead", 0, readyOrderEpoch)
+	off := readyOrderIssue(t, st, "ready-u-off", "off queue bead", 1, readyOrderEpoch.Add(2*time.Minute))
+	readyOrderPlan(t, st, "plan-alpha", "active", store.PlanLane{Lane: "A", Queue: []string{alpha.ID}})
+	readyOrderPlan(t, st, "plan-beta", "active", store.PlanLane{Lane: "Z", Queue: []string{beta.ID}})
 
-	_, _, err := runReadyOrder(t, false)
-	if err == nil {
-		t.Fatal("ready with two active plans succeeded")
+	out, errOut, err := runReadyOrder(t, true)
+	if err != nil {
+		t.Fatalf("ready: %v (%s)", err, errOut)
 	}
-	want := "bd ready: plans plan-alpha and plan-beta are both active; end one with bd plan handoff/close before ordering"
-	if err.Error() != want {
-		t.Fatalf("error = %q, want %q", err.Error(), want)
+	requireReadyOrder(t, readyOrderIDs(t, out), alpha.ID, beta.ID, off.ID)
+
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("decode ready JSON: %v\n%s", err, out)
 	}
-	if strings.Contains(err.Error(), "--since") {
-		t.Fatalf("ready error reused the --since message: %q", err.Error())
+	if rows[0]["plan"] != "plan-alpha" || rows[0]["lane"] != "A" || rows[0]["index"] != float64(1) {
+		t.Fatalf("alpha slot fields = %v, want plan-alpha/A/1", rows[0])
 	}
+	if rows[1]["plan"] != "plan-beta" || rows[1]["lane"] != "Z" || rows[1]["index"] != float64(1) {
+		t.Fatalf("beta slot fields = %v, want plan-beta/Z/1", rows[1])
+	}
+	if _, exists := rows[2]["plan"]; exists {
+		t.Fatalf("off-queue row carries a plan field: %v", rows[2])
+	}
+}
+
+// goldenReadyTable renders cell rows with the ready table's tabwriter
+// settings, giving a byte-exact expectation for printReadyPlanTable.
+func goldenReadyTable(rows [][]string) string {
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 2, 2, ' ', 0)
+	for _, r := range rows {
+		fmt.Fprintln(w, strings.Join(r, "\t"))
+	}
+	w.Flush()
+	return b.String()
+}
+
+func TestPrintReadyPlanTable_PlanColumnGated(t *testing.T) {
+	issue := func(id, title string, priority int) beads.Issue {
+		return beads.Issue{ID: id, Title: title, Type: beads.TypeTask, Status: beads.StatusOpen, Priority: priority}
+	}
+	render := func(t *testing.T, issues []beads.Issue, queue map[string]store.QueueSlot) string {
+		t.Helper()
+		out, _, err := captureStdoutStderr(func() error {
+			printReadyPlanTable(issues, queue)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("capture: %v", err)
+		}
+		return out
+	}
+
+	t.Run("single plan keeps today's columns", func(t *testing.T) {
+		queued := issue("gate-queued", "queued", 1)
+		off := issue("gate-off", "off queue", 2)
+		got := render(t, []beads.Issue{queued, off}, map[string]store.QueueSlot{
+			queued.ID: {Plan: "solo-plan", Lane: "A", Index: 1},
+		})
+		want := goldenReadyTable([][]string{
+			{"LANE", "ID", "P", "STATUS", "TYPE", "ASSIGNEE", "TITLE"},
+			{"A1", queued.ID, "p1", "open", "task", "-", "queued"},
+			{"", off.ID, "p2", "open", "task", "-", "off queue"},
+		})
+		if got != want {
+			t.Fatalf("single-plan output changed:\ngot:\n%swant:\n%s", got, want)
+		}
+	})
+
+	t.Run("two plans lead with PLAN", func(t *testing.T) {
+		alpha := issue("gate-alpha", "alpha bead", 1)
+		off := issue("gate-none", "no plan bead", 2)
+		beta := issue("gate-beta", "beta bead", 3)
+		got := render(t, []beads.Issue{alpha, off, beta}, map[string]store.QueueSlot{
+			alpha.ID: {Plan: "alpha-plan", Lane: "A", Index: 1},
+			beta.ID:  {Plan: "beta-plan", Lane: "Z", Index: 2},
+		})
+		want := goldenReadyTable([][]string{
+			{"PLAN", "LANE", "ID", "P", "STATUS", "TYPE", "ASSIGNEE", "TITLE"},
+			{"alpha-plan", "A1", alpha.ID, "p1", "open", "task", "-", "alpha bead"},
+			{"-", "", off.ID, "p2", "open", "task", "-", "no plan bead"},
+			{"beta-plan", "Z2", beta.ID, "p3", "open", "task", "-", "beta bead"},
+		})
+		if got != want {
+			t.Fatalf("two-plan output is wrong:\ngot:\n%swant:\n%s", got, want)
+		}
+	})
 }
 
 func TestReadyOrder_NoPlanPriorityFirst(t *testing.T) {

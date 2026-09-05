@@ -222,6 +222,102 @@ func TestHandoff_RefusesNonHolder(t *testing.T) {
 	}
 }
 
+func TestActivePlanQueues_UnionsEveryActivePlan(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	for _, plan := range []struct{ id, lane string }{
+		{"alpha-0905", "A"},
+		{"beta-0905", "Z"},
+	} {
+		if err := st.CreatePlan(ctx, &store.ExecutionPlan{ID: plan.id, Title: plan.id}); err != nil {
+			t.Fatalf("CreatePlan %s: %v", plan.id, err)
+		}
+		if err := st.AddLane(ctx, &store.PlanLane{
+			PlanID: plan.id,
+			Lane:   plan.lane,
+			Queue:  []string{plan.id + "-1", plan.id + "-2"},
+		}); err != nil {
+			t.Fatalf("AddLane %s/%s: %v", plan.id, plan.lane, err)
+		}
+	}
+	if err := st.CreatePlan(ctx, &store.ExecutionPlan{ID: "done-0904", Title: "done-0904", Status: "done"}); err != nil {
+		t.Fatalf("CreatePlan done-0904: %v", err)
+	}
+	if err := st.AddLane(ctx, &store.PlanLane{PlanID: "done-0904", Lane: "A", Queue: []string{"done-0904-1"}}); err != nil {
+		t.Fatalf("AddLane done-0904/A: %v", err)
+	}
+
+	ids, slots, err := st.ActivePlanQueues(ctx)
+	if err != nil {
+		t.Fatalf("ActivePlanQueues: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != "alpha-0905" || ids[1] != "beta-0905" {
+		t.Fatalf("plan ids = %v, want [alpha-0905 beta-0905]", ids)
+	}
+	for _, want := range []struct {
+		bead string
+		slot store.QueueSlot
+	}{
+		{"alpha-0905-1", store.QueueSlot{Plan: "alpha-0905", Lane: "A", Index: 1}},
+		{"alpha-0905-2", store.QueueSlot{Plan: "alpha-0905", Lane: "A", Index: 2}},
+		{"beta-0905-1", store.QueueSlot{Plan: "beta-0905", Lane: "Z", Index: 1}},
+		{"beta-0905-2", store.QueueSlot{Plan: "beta-0905", Lane: "Z", Index: 2}},
+	} {
+		got, ok := slots[want.bead]
+		if !ok {
+			t.Fatalf("bead %s missing from the union map", want.bead)
+		}
+		if got != want.slot {
+			t.Fatalf("slot for %s = %+v, want %+v", want.bead, got, want.slot)
+		}
+	}
+	if _, ok := slots["done-0904-1"]; ok {
+		t.Fatal("inactive plan bead leaked into the union map")
+	}
+}
+
+func TestLastHandoffForBead_FindsBeadInSecondPlan(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	for _, id := range []string{"alpha-0905", "beta-0905"} {
+		if err := st.CreatePlan(ctx, &store.ExecutionPlan{ID: id, Title: id}); err != nil {
+			t.Fatalf("CreatePlan %s: %v", id, err)
+		}
+	}
+	if err := st.AddLane(ctx, &store.PlanLane{PlanID: "alpha-0905", Lane: "A", Queue: []string{"bd-alpha-1"}}); err != nil {
+		t.Fatalf("AddLane alpha-0905/A: %v", err)
+	}
+	if err := st.AddLane(ctx, &store.PlanLane{PlanID: "beta-0905", Lane: "B", Queue: []string{"bd-beta-1"}}); err != nil {
+		t.Fatalf("AddLane beta-0905/B: %v", err)
+	}
+	handoffAt := time.Date(2026, 9, 5, 8, 0, 0, 0, time.UTC)
+	if err := st.ClaimLane(ctx, "beta-0905", "B", "sess-beta"); err != nil {
+		t.Fatalf("ClaimLane beta-0905/B: %v", err)
+	}
+	if err := st.Handoff(ctx, &store.PlanHandoff{
+		ID: "H-beta", PlanID: "beta-0905", Lane: "B",
+		SessionID: "sess-beta", CreatedAt: handoffAt,
+	}, 0); err != nil {
+		t.Fatalf("Handoff beta-0905/B: %v", err)
+	}
+
+	at, lane, ok, err := st.LastHandoffForBead(ctx, "bd-beta-1")
+	if err != nil {
+		t.Fatalf("LastHandoffForBead: %v", err)
+	}
+	if !ok || lane != "B" || !at.Equal(handoffAt) {
+		t.Fatalf("at=%v lane=%q ok=%v, want %v B true", at, lane, ok, handoffAt)
+	}
+
+	at, lane, ok, err = st.LastHandoffForBead(ctx, "bd-alpha-1")
+	if err != nil {
+		t.Fatalf("LastHandoffForBead alpha: %v", err)
+	}
+	if ok || lane != "A" || !at.IsZero() {
+		t.Fatalf("alpha bead: at=%v lane=%q ok=%v, want zero, A, false (lane named, no handoff)", at, lane, ok)
+	}
+}
+
 func TestHandoff_CascadesOnPlanDelete(t *testing.T) {
 	ctx := context.Background()
 	st := newPlanStore(t)

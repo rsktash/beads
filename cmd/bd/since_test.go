@@ -164,27 +164,24 @@ func TestSince_HandoffResolvesLaneTimestamp(t *testing.T) {
 	}
 }
 
-func TestSince_TwoActivePlansAmbiguous(t *testing.T) {
+func TestSince_TwoActivePlansSecondPlanResolves(t *testing.T) {
 	st := newTempAuthorityStore(t)
-	bead := mkAuthIssue(t, st, "ambiguous plan", "## Files\n- server/src/auth.ts\n")
-	for _, id := range []string{"plan-alpha", "plan-beta"} {
-		if err := st.CreatePlan(context.Background(), &store.ExecutionPlan{ID: id, Title: id}); err != nil {
-			t.Fatalf("create %s: %v", id, err)
-		}
-	}
+	bead := mkAuthIssue(t, st, "second plan lane", "## Files\n- server/src/auth.ts\n")
+	row := mkAuthStatement(t, st, authStatement{
+		kind: "ruling", issueID: bead.ID, topic: "second-plan", text: "after second-plan handoff", createdAt: sinceTestWindow.Add(time.Minute),
+	})
+	changedAt := sinceTestWindow.Add(time.Minute)
+	setStatementChangedAt(t, st, row.ID, &changedAt)
+	addSinceHandoff(t, st, "plan-alpha", "active", "A", []string{"bd-someone-else"}, sinceTestWindow.Add(-time.Hour))
+	addSinceHandoff(t, st, "plan-beta", "active", "B", []string{bead.ID}, sinceTestWindow)
 
-	_, _, err := runAuthority(t, "authority", bead.ID, "--since", "handoff")
-	if err == nil {
-		t.Fatal("two active plans must be ambiguous")
+	out, errOut, err := runAuthority(t, "authority", bead.ID, "--kind", "rulings", "--since", "handoff")
+	requireNoErr(t, err, errOut)
+	if !strings.Contains(out, "RULINGS") || !strings.Contains(out, "(since 2026-09-02 12:34 — lane B handoff)") {
+		t.Fatalf("second-plan lane handoff is missing from the section header:\n%s", out)
 	}
-	for _, id := range []string{"plan-alpha", "plan-beta"} {
-		if !strings.Contains(err.Error(), id) {
-			t.Errorf("error does not name %s: %v", id, err)
-		}
-	}
-	const want = "--since handoff is ambiguous: plans plan-alpha and plan-beta are both active"
-	if err.Error() != want {
-		t.Fatalf("error = %q, want %q", err, want)
+	if !strings.Contains(out, "after second-plan handoff") {
+		t.Fatalf("ruling inside the second-plan window is missing:\n%s", out)
 	}
 }
 

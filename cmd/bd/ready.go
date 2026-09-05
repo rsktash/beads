@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -53,7 +52,7 @@ func newReadyCmd() *cobra.Command {
 				}
 				out = filtered
 			}
-			planID, queue, err := orderReadyIssues(cc.ctx, cc.store, out)
+			planIDs, queue, err := orderReadyIssues(cc.ctx, cc.store, out)
 			if err != nil {
 				return err
 			}
@@ -68,9 +67,9 @@ func newReadyCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return writeJSON(rows)
+				return writeJSON(readyJSONRows(rows, queue))
 			}
-			if planID != "" {
+			if len(planIDs) > 0 {
 				printReadyPlanTable(out, queue)
 			} else {
 				printIssueTable(out)
@@ -84,27 +83,21 @@ func newReadyCmd() *cobra.Command {
 	return cmd
 }
 
-func orderReadyIssues(ctx context.Context, st *store.Store, issues []beads.Issue) (string, map[string]store.QueueSlot, error) {
-	planID, queue, err := st.ActivePlanQueue(ctx)
+func orderReadyIssues(ctx context.Context, st *store.Store, issues []beads.Issue) ([]string, map[string]store.QueueSlot, error) {
+	planIDs, queue, err := st.ActivePlanQueues(ctx)
 	if err != nil {
-		var two *store.ErrTwoActivePlans
-		if errors.As(err, &two) {
-			return "", nil, fmt.Errorf(
-				"bd ready: plans %s and %s are both active; end one with bd plan handoff/close before ordering",
-				two.A, two.B)
-		}
-		return "", nil, err
+		return nil, nil, err
 	}
 
 	cleared := map[string]bool(nil)
 	lastHandoff, err := st.NewestHandoffAt(ctx)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
 	if lastHandoff != nil {
 		cleared, err = st.BlockerClearedSince(ctx, *lastHandoff)
 		if err != nil {
-			return "", nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -116,6 +109,9 @@ func orderReadyIssues(ctx context.Context, st *store.Store, issues []beads.Issue
 			return aQueued
 		}
 		if aQueued {
+			if aSlot.Plan != bSlot.Plan {
+				return aSlot.Plan < bSlot.Plan
+			}
 			if aSlot.Lane != bSlot.Lane {
 				return aSlot.Lane < bSlot.Lane
 			}
@@ -129,19 +125,57 @@ func orderReadyIssues(ctx context.Context, st *store.Store, issues []beads.Issue
 		}
 		return a.UpdatedAt.After(b.UpdatedAt)
 	})
-	return planID, queue, nil
+	return planIDs, queue, nil
 }
 
+// readyJSONRow is the slim ready row plus the bead's queue slot: plan, lane,
+// and one-based lane index. Beads in no lane keep the plain slim shape.
+type readyJSONRow struct {
+	slimIssue
+	Plan  string `json:"plan,omitempty"`
+	Lane  string `json:"lane,omitempty"`
+	Index int    `json:"index,omitempty"`
+}
+
+func readyJSONRows(rows []slimIssue, queue map[string]store.QueueSlot) []readyJSONRow {
+	out := make([]readyJSONRow, len(rows))
+	for i, r := range rows {
+		out[i] = readyJSONRow{slimIssue: r}
+		if slot, ok := queue[r.ID]; ok {
+			out[i].Plan = slot.Plan
+			out[i].Lane = slot.Lane
+			out[i].Index = slot.Index
+		}
+	}
+	return out
+}
+
+// printReadyPlanTable renders the ready table with lane positions. The PLAN
+// column leads only when the printed rows span more than one plan; a
+// single-plan render keeps today's columns byte for byte.
 func printReadyPlanTable(issues []beads.Issue, queue map[string]store.QueueSlot) {
 	if len(issues) == 0 {
 		return
 	}
+	seen := map[string]bool{}
+	for _, issue := range issues {
+		if slot, ok := queue[issue.ID]; ok && slot.Plan != "" {
+			seen[slot.Plan] = true
+		}
+	}
+	multiPlan := len(seen) > 1
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "LANE\tID\tP\tSTATUS\tTYPE\tASSIGNEE\tTITLE")
+	if multiPlan {
+		fmt.Fprintln(w, "PLAN\tLANE\tID\tP\tSTATUS\tTYPE\tASSIGNEE\tTITLE")
+	} else {
+		fmt.Fprintln(w, "LANE\tID\tP\tSTATUS\tTYPE\tASSIGNEE\tTITLE")
+	}
 	for _, issue := range issues {
 		lane := ""
+		plan := ""
 		if slot, ok := queue[issue.ID]; ok {
 			lane = fmt.Sprintf("%s%d", slot.Lane, slot.Index)
+			plan = slot.Plan
 		}
 		assignee := issue.Assignee
 		if assignee == "" {
@@ -150,6 +184,14 @@ func printReadyPlanTable(issues []beads.Issue, queue map[string]store.QueueSlot)
 		title := issue.Title
 		if len(title) > 64 {
 			title = title[:61] + "..."
+		}
+		if multiPlan {
+			if plan == "" {
+				plan = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\tp%d\t%s\t%s\t%s\t%s\n",
+				plan, lane, issue.ID, issue.Priority, issue.Status, issue.Type, assignee, strings.ReplaceAll(title, "\n", " "))
+			continue
 		}
 		fmt.Fprintf(w, "%s\t%s\tp%d\t%s\t%s\t%s\t%s\n",
 			lane, issue.ID, issue.Priority, issue.Status, issue.Type, assignee, strings.ReplaceAll(title, "\n", " "))

@@ -25,17 +25,6 @@ type ExecutionPlan struct {
 	CreatedBy string    `json:"created_by,omitempty"`
 }
 
-// ErrTwoActivePlans reports an invalid execution state without choosing which
-// plan should govern the caller. Callers own the wording for their command.
-type ErrTwoActivePlans struct {
-	A string
-	B string
-}
-
-func (e *ErrTwoActivePlans) Error() string {
-	return fmt.Sprintf("plans %s and %s are both active", e.A, e.B)
-}
-
 // PlanLane is one concurrent slice of a plan.
 type PlanLane struct {
 	PlanID    string     `json:"plan_id"`
@@ -48,8 +37,10 @@ type PlanLane struct {
 	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
 }
 
-// QueueSlot identifies one bead's lane and one-based position in that lane.
+// QueueSlot identifies one bead's plan, its lane in that plan, and its
+// one-based position in the lane.
 type QueueSlot struct {
+	Plan  string
 	Lane  string
 	Index int
 }
@@ -159,10 +150,9 @@ func (s *Store) GetPlan(ctx context.Context, id string) (*ExecutionPlan, error) 
 	return &p, nil
 }
 
-// ActivePlan returns the single active execution plan. No active plan is not
-// an error; more than one is an invalid state that the caller must resolve.
-func (s *Store) ActivePlan(ctx context.Context) (*ExecutionPlan, error) {
-	q := s.rebind(`SELECT id, title, status, preflight, created_at, created_by FROM execution_plan WHERE status = 'active' ORDER BY id LIMIT 2`)
+// ActivePlans returns every active execution plan ordered by id.
+func (s *Store) ActivePlans(ctx context.Context) ([]ExecutionPlan, error) {
+	q := s.rebind(`SELECT id, title, status, preflight, created_at, created_by FROM execution_plan WHERE status = 'active' ORDER BY id`)
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
@@ -180,39 +170,36 @@ func (s *Store) ActivePlan(ctx context.Context) (*ExecutionPlan, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(plans) == 0 {
-		return nil, nil
-	}
-	if len(plans) == 2 {
-		return nil, &ErrTwoActivePlans{A: plans[0].ID, B: plans[1].ID}
-	}
-	return &plans[0], nil
+	return plans, nil
 }
 
-// ActivePlanQueue returns the queue slots for the single active plan. With no
-// active plan it returns an empty plan id and a nil order map.
-func (s *Store) ActivePlanQueue(ctx context.Context) (string, map[string]QueueSlot, error) {
-	plan, err := s.ActivePlan(ctx)
+// ActivePlanQueues unions the queue slots of every active plan. It returns
+// the active plan ids in id order plus a map from bead id to its slot. A bead
+// sits in one lane and lanes belong to one plan; should a bead ever appear
+// twice, the first slot seen in plan-id order wins.
+func (s *Store) ActivePlanQueues(ctx context.Context) ([]string, map[string]QueueSlot, error) {
+	plans, err := s.ActivePlans(ctx)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
-	if plan == nil {
-		return "", nil, nil
-	}
-	lanes, err := s.ListLanes(ctx, plan.ID)
-	if err != nil {
-		return "", nil, err
-	}
+	ids := make([]string, 0, len(plans))
 	order := make(map[string]QueueSlot)
-	for _, lane := range lanes {
-		for i, issueID := range lane.Queue {
-			if _, exists := order[issueID]; exists {
-				continue
+	for _, plan := range plans {
+		lanes, err := s.ListLanes(ctx, plan.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, plan.ID)
+		for _, lane := range lanes {
+			for i, issueID := range lane.Queue {
+				if _, exists := order[issueID]; exists {
+					continue
+				}
+				order[issueID] = QueueSlot{Plan: plan.ID, Lane: lane.Lane, Index: i + 1}
 			}
-			order[issueID] = QueueSlot{Lane: lane.Lane, Index: i + 1}
 		}
 	}
-	return plan.ID, order, nil
+	return ids, order, nil
 }
 
 // DeletePlan removes a plan; lanes, sessions and handoffs cascade.

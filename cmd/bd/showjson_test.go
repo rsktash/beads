@@ -591,7 +591,9 @@ func TestShowJSON_PartialSuccess(t *testing.T) {
 	if len(arr) != 1 {
 		t.Fatalf("partial success should emit array with 1 object, got %d out %s errStr %s", len(arr), out, errStr)
 	}
-	var id struct{ ID string `json:"id"` }
+	var id struct {
+		ID string `json:"id"`
+	}
 	b := arr[0]["id"]
 	if err := json.Unmarshal(b, &id.ID); err != nil {
 		t.Fatalf("unmarshal id: %v", err)
@@ -744,4 +746,3 @@ func TestShowJSON_StatementsPayloadFields(t *testing.T) {
 	_ = os.Getenv
 	_ = time.Now
 }
-

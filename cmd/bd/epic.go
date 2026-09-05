@@ -52,8 +52,8 @@ func newEpicCmd() *cobra.Command {
 			}
 
 			type counts struct {
-				ID, Title                            string
-				Status                               beads.Status
+				ID, Title                                string
+				Status                                   beads.Status
 				Open, InProgress, Blocked, Closed, Other int
 			}
 			out := make([]counts, 0, len(epics))

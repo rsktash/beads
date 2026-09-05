@@ -874,33 +874,33 @@ func (s *Store) countDepsClosedSince(ctx context.Context, issueID string, at tim
 }
 
 // LastHandoffForBead is what `--since handoff` resolves to: the newest handoff
-// on the bead's lane in the single active plan. lane is returned even when it
-// has no handoff so the caller can name the missing handoff precisely.
+// on the bead's lane, searching every active plan's lanes in id order. lane is
+// returned even when it has no handoff so the caller can name the missing
+// handoff precisely.
 func (s *Store) LastHandoffForBead(ctx context.Context, issueID string) (at time.Time, lane string, ok bool, err error) {
-	plan, err := s.ActivePlan(ctx)
+	plans, err := s.ActivePlans(ctx)
 	if err != nil {
 		return time.Time{}, "", false, err
 	}
-	if plan == nil {
-		return time.Time{}, "", false, nil
-	}
-	lanes, err := s.ListLanes(ctx, plan.ID)
-	if err != nil {
-		return time.Time{}, "", false, err
-	}
-	for _, candidate := range lanes {
-		for _, id := range candidate.Queue {
-			if id != issueID {
-				continue
+	for _, plan := range plans {
+		lanes, err := s.ListLanes(ctx, plan.ID)
+		if err != nil {
+			return time.Time{}, "", false, err
+		}
+		for _, candidate := range lanes {
+			for _, id := range candidate.Queue {
+				if id != issueID {
+					continue
+				}
+				at, err := s.LastHandoffAt(ctx, plan.ID, candidate.Lane)
+				if err != nil {
+					return time.Time{}, candidate.Lane, false, err
+				}
+				if at == nil {
+					return time.Time{}, candidate.Lane, false, nil
+				}
+				return *at, candidate.Lane, true, nil
 			}
-			at, err := s.LastHandoffAt(ctx, plan.ID, candidate.Lane)
-			if err != nil {
-				return time.Time{}, candidate.Lane, false, err
-			}
-			if at == nil {
-				return time.Time{}, candidate.Lane, false, nil
-			}
-			return *at, candidate.Lane, true, nil
 		}
 	}
 	return time.Time{}, "", false, nil

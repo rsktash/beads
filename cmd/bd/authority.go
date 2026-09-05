@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -224,10 +223,6 @@ func resolveBriefSince(cc *cmdCtx, raw, issueID string) (time.Time, string, erro
 		}
 		at, lane, ok, err := cc.store.LastHandoffForBead(cc.ctx, issueID)
 		if err != nil {
-			var ambiguous *store.ErrTwoActivePlans
-			if errors.As(err, &ambiguous) {
-				return time.Time{}, "", fmt.Errorf("--since handoff is ambiguous: plans %s and %s are both active", ambiguous.A, ambiguous.B)
-			}
 			return time.Time{}, "", err
 		}
 		if !ok {

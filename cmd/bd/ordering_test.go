@@ -481,7 +481,7 @@ func TestExpand_NoSessionIdDisablesDedupe(t *testing.T) {
 	}
 }
 
-// --- Pre-flight amendment 2-E: an ambiguous or absent plan, or a missing
+// --- Pre-flight amendment 2-E: a bead in no active plan lane, or a missing
 // handoff, must not fail a brief rendered without --since ---
 
 // assertOrderingDegraded checks one degraded handoff resolution: the brief
@@ -524,7 +524,7 @@ func TestOrder_AmbiguousPlanDoesNotFailBrief(t *testing.T) {
 		return bead.ID
 	}
 
-	t.Run("two active plans", func(t *testing.T) {
+	t.Run("two active plans, bead in no lane", func(t *testing.T) {
 		t.Setenv("TMPDIR", t.TempDir())
 		st := newTempAuthorityStore(t)
 		bead := changedFixture(t, st)
@@ -535,7 +535,7 @@ func TestOrder_AmbiguousPlanDoesNotFailBrief(t *testing.T) {
 		}
 		out, errOut, err := runAuthority(t, "authority", bead)
 		requireNoErr(t, err, errOut)
-		assertOrderingDegraded(t, out, errOut, "plan-order-a")
+		assertOrderingDegraded(t, out, errOut, "is in no execution plan lane")
 	})
 
 	t.Run("lane without handoff", func(t *testing.T) {
