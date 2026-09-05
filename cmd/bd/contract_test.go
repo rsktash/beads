@@ -19,6 +19,7 @@ import (
 
 func newTempContractStore(t *testing.T, prefix string) (string, *store.Store) {
 	t.Helper()
+	isolateExpandState(t)
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "contract.db")
 	st, err := store.Open(ctx, dsn)

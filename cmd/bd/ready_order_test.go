@@ -17,6 +17,7 @@ var readyOrderEpoch = time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 
 func newReadyOrderStore(t *testing.T) *store.Store {
 	t.Helper()
+	isolateExpandState(t)
 	_, st := newTempContractStore(t, "ready")
 	return st
 }

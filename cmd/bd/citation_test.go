@@ -22,6 +22,7 @@ type citationCLIFixture struct {
 
 func newCitationCLIFixture(t *testing.T, withGit bool) citationCLIFixture {
 	t.Helper()
+	isolateExpandState(t)
 	root := t.TempDir()
 	beadDir := filepath.Join(root, ".bd")
 	if err := os.MkdirAll(beadDir, 0o755); err != nil {

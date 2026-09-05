@@ -441,12 +441,14 @@ func TestExpand_DedupeDoesNotReorder(t *testing.T) {
 
 func TestExpand_UnwritableStateDirRendersFull(t *testing.T) {
 	base := t.TempDir()
-	t.Setenv("TMPDIR", filepath.Join(base, "no-write"))
-	t.Setenv("CLAUDE_SESSION_ID", "expand-unwritable")
 	if err := os.MkdirAll(filepath.Join(base, "no-write"), 0o500); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	st := newTempAuthorityStore(t)
+	// After the fixture, which points TMPDIR at a writable directory of its
+	// own: this test needs the unwritable one it just made.
+	t.Setenv("TMPDIR", filepath.Join(base, "no-write"))
+	t.Setenv("CLAUDE_SESSION_ID", "expand-unwritable")
 	bead := mkAuthIssue(t, st, "unwritable state", "## Files\n- server/src/auth.ts\n")
 	long := "the first line of the ruling " + strings.Repeat("y", 150) + "\nand a second line only --expand shows"
 	r := mkAuthStatement(t, st, authStatement{kind: "ruling", issueID: bead.ID, topic: "expand-me", text: long})

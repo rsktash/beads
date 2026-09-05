@@ -18,6 +18,7 @@ import (
 
 func newTempQFStore(t *testing.T, prefix string) (string, *store.Store) {
 	t.Helper()
+	isolateExpandState(t)
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "qf.db")
 	st, err := store.Open(ctx, dsn)

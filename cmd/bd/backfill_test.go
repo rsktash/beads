@@ -17,6 +17,7 @@ import (
 
 func newTempBackfillStore(t *testing.T, prefix string) (string, *store.Store) {
 	t.Helper()
+	isolateExpandState(t)
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "backfill.db")
 	st, err := store.Open(ctx, dsn)

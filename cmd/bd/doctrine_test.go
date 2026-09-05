@@ -17,6 +17,7 @@ import (
 // otherwise.
 func newTempDoctrineStore(t *testing.T) *store.Store {
 	t.Helper()
+	isolateExpandState(t)
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "doctrine.db")
 	st, err := store.Open(ctx, dsn)

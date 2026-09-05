@@ -14,6 +14,7 @@ import (
 // newTempTopicsStore opens a fresh store and points the CLI's --db flag at it.
 func newTempTopicsStore(t *testing.T) *store.Store {
 	t.Helper()
+	isolateExpandState(t)
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "topics.db")
 	st, err := store.Open(ctx, dsn)

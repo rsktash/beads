@@ -19,6 +19,7 @@ import (
 // real transcripts.
 func newTempAuthorityStore(t *testing.T) *store.Store {
 	t.Helper()
+	isolateExpandState(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	st, err := store.Open(ctx, filepath.Join(dir, "authority.db"))

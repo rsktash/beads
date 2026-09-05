@@ -14,6 +14,7 @@ import (
 
 func newTempPlanStore(t *testing.T) *store.Store {
 	t.Helper()
+	isolateExpandState(t)
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "plan.db")
 	st, err := store.Open(ctx, dsn)

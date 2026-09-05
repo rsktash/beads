@@ -14,6 +14,7 @@ import (
 // newTempAreasStore opens a fresh store and points the CLI's --db flag at it.
 func newTempAreasStore(t *testing.T) *store.Store {
 	t.Helper()
+	isolateExpandState(t)
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "areas.db")
 	st, err := store.Open(ctx, dsn)
