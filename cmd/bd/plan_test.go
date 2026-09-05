@@ -404,3 +404,129 @@ func TestPlan_ClaimRefusesHeldLane(t *testing.T) {
 		t.Fatalf("error = %q", err.Error())
 	}
 }
+
+func TestPlan_DoneEndsAFinishedPlan(t *testing.T) {
+	st := newTempPlanStore(t)
+	a := mkPlanIssue(t, st, "only task")
+	planID := planWithLane(t, st, "A", 1, []string{a.ID})
+
+	out, err := runPlan(t, "done", planID)
+	if err != nil {
+		t.Fatalf("plan done: %v (%s)", err, out)
+	}
+	if want := "plan " + planID + " done"; !strings.Contains(out, want) {
+		t.Fatalf("missing %q in:\n%s", want, out)
+	}
+	show, err := runPlan(t, "show", planID)
+	if err != nil {
+		t.Fatalf("plan show: %v (%s)", err, show)
+	}
+	if !strings.Contains(show, "PLAN  "+planID+"  done  ") {
+		t.Fatalf("plan show does not render the ended state:\n%s", show)
+	}
+	if strings.Contains(show, "end it with bd plan done") {
+		t.Fatal("an ended plan still carries the finishable hint")
+	}
+}
+
+func TestPlan_DoneRefusesAHeldLaneUntilForced(t *testing.T) {
+	st := newTempPlanStore(t)
+	planID, _ := heldLanePlan(t, st)
+
+	out, err := runPlan(t, "done", planID)
+	if err == nil {
+		t.Fatalf("ending a held plan should be refused:\n%s", out)
+	}
+	msg := err.Error()
+	for _, want := range []string{"still running", "held", "--force"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("refusal %q does not name %q", msg, want)
+		}
+	}
+	if p, gerr := st.GetPlan(context.Background(), planID); gerr != nil {
+		t.Fatalf("GetPlan: %v", gerr)
+	} else if p.Status != "active" {
+		t.Fatalf("refused end wrote status %q", p.Status)
+	}
+
+	if out, err := runPlan(t, "done", planID, "--force"); err != nil {
+		t.Fatalf("forced done: %v (%s)", err, out)
+	}
+	p, err := st.GetPlan(context.Background(), planID)
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if p.Status != "done" {
+		t.Fatalf("status = %q, want done", p.Status)
+	}
+}
+
+func TestPlan_AbandonRecordsTheOtherOutcome(t *testing.T) {
+	st := newTempPlanStore(t)
+	a, b := mkPlanIssue(t, st, "first"), mkPlanIssue(t, st, "second")
+	planID := planWithLane(t, st, "A", 1, []string{a.ID, b.ID})
+
+	out, err := runPlan(t, "abandon", planID, "--force")
+	if err != nil {
+		t.Fatalf("plan abandon: %v (%s)", err, out)
+	}
+	if want := "plan " + planID + " abandoned"; !strings.Contains(out, want) {
+		t.Fatalf("missing %q in:\n%s", want, out)
+	}
+	p, err := st.GetPlan(context.Background(), planID)
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if p.Status != "abandoned" {
+		t.Fatalf("status = %q, want abandoned", p.Status)
+	}
+}
+
+func TestPlan_ShowHintsAFinishedPlanIsEndable(t *testing.T) {
+	st := newTempPlanStore(t)
+	a := mkPlanIssue(t, st, "only task")
+	planID := planWithLane(t, st, "A", 1, []string{a.ID})
+
+	out, err := runPlan(t, "show", planID)
+	if err != nil {
+		t.Fatalf("plan show: %v (%s)", err, out)
+	}
+	want := "every lane is done — end it with bd plan done " + planID
+	if !strings.Contains(out, want) {
+		t.Fatalf("missing hint %q in:\n%s", want, out)
+	}
+}
+
+func TestPlan_ShowWithholdsTheHintFromARunningPlan(t *testing.T) {
+	st := newTempPlanStore(t)
+	a, b := mkPlanIssue(t, st, "first"), mkPlanIssue(t, st, "second")
+	planID := planWithLane(t, st, "A", 1, []string{a.ID, b.ID})
+
+	out, err := runPlan(t, "show", planID)
+	if err != nil {
+		t.Fatalf("plan show: %v (%s)", err, out)
+	}
+	if strings.Contains(out, "every lane is done") {
+		t.Fatalf("a lane short of its end carries the hint:\n%s", out)
+	}
+}
+
+func TestPlan_DoneUnknownPlanNamesIt(t *testing.T) {
+	newTempPlanStore(t)
+	_, err := runPlan(t, "done", "no-such-plan")
+	if err == nil || !strings.Contains(err.Error(), "plan no-such-plan not found") {
+		t.Fatalf("want a named not-found refusal, got %v", err)
+	}
+}
+
+func TestPlan_EndOpenToExecutor(t *testing.T) {
+	t.Setenv("BD_ACTOR", "executor")
+	st := newTempPlanStore(t)
+	a := mkPlanIssue(t, st, "only task")
+	planID := planWithLane(t, st, "A", 1, []string{a.ID})
+
+	// Every other plan verb is open to an executor; ending is the same class.
+	if out, err := runPlan(t, "done", planID); err != nil {
+		t.Fatalf("an executor must be able to end a plan: %v (%s)", err, out)
+	}
+}

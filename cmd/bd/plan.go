@@ -40,6 +40,8 @@ func newPlanCmd() *cobra.Command {
 		newPlanJoinCmd(),
 		newPlanClaimCmd(),
 		newPlanHandoffCmd(),
+		newPlanDoneCmd(),
+		newPlanAbandonCmd(),
 	)
 	return root
 }
@@ -344,6 +346,53 @@ func parkNeedsQuestion(beadID string) error {
 	return fmt.Errorf("park %s needs a question id — file one with bd question add", beadID)
 }
 
+// newPlanDoneCmd and newPlanAbandonCmd are the two ways a plan leaves active.
+// They share one runner: only the recorded status differs.
+func newPlanDoneCmd() *cobra.Command {
+	return newPlanEndCmd("done", "Mark a finished plan done", "the plan is finished")
+}
+
+func newPlanAbandonCmd() *cobra.Command {
+	return newPlanEndCmd("abandon", "Abandon a plan that will never finish", "the plan will never finish")
+}
+
+func newPlanEndCmd(verb, short, why string) *cobra.Command {
+	status := verb
+	if verb == "abandon" {
+		status = "abandoned"
+	}
+	var force bool
+	cmd := &cobra.Command{
+		Use:   verb + " <plan>",
+		Short: short,
+		Long:  short + " — " + why + ", so it stops ordering ready and leaves the PLAN column.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			planID := strings.TrimSpace(args[0])
+			cc, err := openStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer cc.store.Close()
+			err = cc.store.EndPlan(cc.ctx, planID, status, force)
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("plan %s not found", planID)
+			}
+			var unfinished *store.PlanUnfinishedError
+			if errors.As(err, &unfinished) {
+				return fmt.Errorf("%v — pass --force to end it anyway", unfinished)
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "plan %s %s\n", planID, status)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "end the plan even while a lane is held or short of its end")
+	return cmd
+}
+
 func newPlanShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <plan>",
@@ -436,9 +485,15 @@ func laneReadiness(cc *cmdCtx, lanes []store.PlanLane) (map[string]string, error
 }
 
 // renderPlan writes the documented shape: one PLAN line, one LANE line per
-// lane, and the last handoff entry indented under its lane.
+// lane, and the last handoff entry indented under its lane. An active plan
+// whose lanes have all run out carries a finishable hint under the PLAN line.
 func renderPlan(w io.Writer, p *store.ExecutionPlan, lanes []store.PlanLane, last map[string]store.PlanHandoff, readiness map[string]string) {
 	fmt.Fprintf(w, "PLAN  %s  %s  %s\n", p.ID, p.Status, p.Title)
+	// A plan every lane of which has run out is over but still ordering ready.
+	// The hint names the verb; only the verb changes the status.
+	if store.Finishable(*p, lanes) {
+		fmt.Fprintf(w, "      every lane is done — end it with bd plan done %s\n", p.ID)
+	}
 	for _, l := range lanes {
 		fields := []string{"LANE", l.Lane, fmt.Sprintf("cursor %d/%d", l.Cursor, len(l.Queue))}
 		h, handed := last[l.Lane]

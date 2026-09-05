@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -400,5 +401,209 @@ func TestHandoff_CascadesOnPlanDelete(t *testing.T) {
 	}
 	if len(hs) != 0 {
 		t.Fatalf("handoffs = %d, want 0 after cascade", len(hs))
+	}
+}
+
+// finishLane runs a lane's cursor to the end of its queue.
+func finishLane(t *testing.T, st *store.Store, planID, lane string) {
+	t.Helper()
+	ctx := context.Background()
+	l, err := st.GetLane(ctx, planID, lane)
+	if err != nil {
+		t.Fatalf("GetLane %s/%s: %v", planID, lane, err)
+	}
+	if err := st.ClaimLane(ctx, planID, lane, "sess-finish"); err != nil {
+		t.Fatalf("ClaimLane %s/%s: %v", planID, lane, err)
+	}
+	h := &store.PlanHandoff{
+		ID:        "ph-" + planID + "-" + lane,
+		PlanID:    planID,
+		Lane:      lane,
+		SessionID: "sess-finish",
+	}
+	if err := st.Handoff(ctx, h, len(l.Queue)); err != nil {
+		t.Fatalf("Handoff %s/%s: %v", planID, lane, err)
+	}
+}
+
+func TestEndPlan_FinishedPlanLeavesTheReadyUnion(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+	finishLane(t, st, "night-run-0904", "A")
+
+	if err := st.EndPlan(ctx, "night-run-0904", "done", false); err != nil {
+		t.Fatalf("EndPlan: %v", err)
+	}
+	p, err := st.GetPlan(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if p.Status != "done" {
+		t.Fatalf("status = %q, want done", p.Status)
+	}
+	ids, slots, err := st.ActivePlanQueues(ctx)
+	if err != nil {
+		t.Fatalf("ActivePlanQueues: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("plan ids = %v, want none", ids)
+	}
+	if _, ok := slots["bd-1"]; ok {
+		t.Fatal("ended plan still orders ready")
+	}
+}
+
+func TestEndPlan_RefusesHeldAndUnfinishedLanesTogether(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+	if err := st.AddLane(ctx, &store.PlanLane{
+		PlanID: "night-run-0904",
+		Lane:   "B",
+		Queue:  []string{"bd-4"},
+	}); err != nil {
+		t.Fatalf("AddLane B: %v", err)
+	}
+	if err := st.ClaimLane(ctx, "night-run-0904", "A", "sess-holder"); err != nil {
+		t.Fatalf("ClaimLane: %v", err)
+	}
+
+	err := st.EndPlan(ctx, "night-run-0904", "done", false)
+	var unfinished *store.PlanUnfinishedError
+	if !errors.As(err, &unfinished) {
+		t.Fatalf("want PlanUnfinishedError, got %T: %v", err, err)
+	}
+	// Both reasons in one refusal: A is held, A and B are both short of the end.
+	if len(unfinished.Held) != 1 || !strings.Contains(unfinished.Held[0], "sess-holder") {
+		t.Fatalf("held = %v, want A held by sess-holder", unfinished.Held)
+	}
+	if len(unfinished.Open) != 2 {
+		t.Fatalf("open = %v, want both lanes", unfinished.Open)
+	}
+	p, err := st.GetPlan(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if p.Status != "active" {
+		t.Fatalf("refused end still wrote status %q", p.Status)
+	}
+}
+
+func TestEndPlan_ForceEndsAHeldPlan(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+	if err := st.ClaimLane(ctx, "night-run-0904", "A", "sess-holder"); err != nil {
+		t.Fatalf("ClaimLane: %v", err)
+	}
+
+	if err := st.EndPlan(ctx, "night-run-0904", "abandoned", true); err != nil {
+		t.Fatalf("forced EndPlan: %v", err)
+	}
+	p, err := st.GetPlan(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if p.Status != "abandoned" {
+		t.Fatalf("status = %q, want abandoned", p.Status)
+	}
+}
+
+func TestEndPlan_RefusesRewritingASettledOutcome(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+	finishLane(t, st, "night-run-0904", "A")
+	if err := st.EndPlan(ctx, "night-run-0904", "done", false); err != nil {
+		t.Fatalf("first end: %v", err)
+	}
+
+	err := st.EndPlan(ctx, "night-run-0904", "abandoned", true)
+	if err == nil {
+		t.Fatal("re-ending a settled plan should be refused, force included")
+	}
+	p, err := st.GetPlan(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if p.Status != "done" {
+		t.Fatalf("status = %q, want the first outcome to stand", p.Status)
+	}
+}
+
+func TestEndPlan_RefusesAStatusOutsideTheVocabulary(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+
+	for _, status := range []string{"closed", "active", ""} {
+		if err := st.EndPlan(ctx, "night-run-0904", status, true); err == nil {
+			t.Fatalf("status %q should be refused", status)
+		}
+	}
+}
+
+func TestEndPlan_UnknownPlanIsNotFound(t *testing.T) {
+	st := newPlanStore(t)
+	err := st.EndPlan(context.Background(), "no-such-plan", "done", true)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %T: %v", err, err)
+	}
+}
+
+func TestFinishable_LaneLessPlanIsNotFinishable(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	// The case that rules derivation out: an empty queue counts as a done
+	// lane, so a plan still being built must never read as finished.
+	if err := st.CreatePlan(ctx, &store.ExecutionPlan{ID: "fresh-0905", Title: "fresh"}); err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	p, err := st.GetPlan(ctx, "fresh-0905")
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if store.Finishable(*p, nil) {
+		t.Fatal("a plan with no lanes yet must not read as finishable")
+	}
+	if err := st.AddLane(ctx, &store.PlanLane{PlanID: "fresh-0905", Lane: "A", Queue: []string{"bd-1"}}); err != nil {
+		t.Fatalf("AddLane: %v", err)
+	}
+	lanes, err := st.ListLanes(ctx, "fresh-0905")
+	if err != nil {
+		t.Fatalf("ListLanes: %v", err)
+	}
+	if store.Finishable(*p, lanes) {
+		t.Fatal("a lane short of its end must not read as finishable")
+	}
+}
+
+func TestFinishable_EveryLaneDoneOnAnActivePlan(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+	finishLane(t, st, "night-run-0904", "A")
+
+	p, err := st.GetPlan(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	lanes, err := st.ListLanes(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("ListLanes: %v", err)
+	}
+	if !store.Finishable(*p, lanes) {
+		t.Fatal("an active plan with every lane done should read as finishable")
+	}
+	if err := st.EndPlan(ctx, "night-run-0904", "done", false); err != nil {
+		t.Fatalf("EndPlan: %v", err)
+	}
+	ended, err := st.GetPlan(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if store.Finishable(*ended, lanes) {
+		t.Fatal("an ended plan is no longer finishable")
 	}
 }

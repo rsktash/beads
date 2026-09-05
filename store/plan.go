@@ -202,6 +202,94 @@ func (s *Store) ActivePlanQueues(ctx context.Context) ([]string, map[string]Queu
 	return ids, order, nil
 }
 
+// PlanUnfinishedError reports an end refused because the plan is still
+// running. Both reasons are collected so one message names everything the
+// caller must settle, rather than one refusal per round trip.
+type PlanUnfinishedError struct {
+	PlanID string
+	Held   []string // lanes with a holder, "<lane> held by <session>"
+	Open   []string // lanes short of the end, "<lane> at <cursor>/<len>"
+}
+
+func (e *PlanUnfinishedError) Error() string {
+	parts := make([]string, 0, 2)
+	if len(e.Held) > 0 {
+		parts = append(parts, "held: "+strings.Join(e.Held, ", "))
+	}
+	if len(e.Open) > 0 {
+		parts = append(parts, "unfinished: "+strings.Join(e.Open, ", "))
+	}
+	return fmt.Sprintf("plan %s is still running (%s)", e.PlanID, strings.Join(parts, "; "))
+}
+
+// planStatuses is the closed vocabulary migration 0008 CHECKs, validated here
+// so a bad value reports a status rather than a SQL constraint.
+var planStatuses = map[string]bool{"active": true, "done": true, "abandoned": true}
+
+// Finishable reports an active plan every lane of which has run out: the plan
+// is over but nothing has said so. Reads surface it as a hint; only EndPlan
+// changes the status.
+func Finishable(p ExecutionPlan, lanes []PlanLane) bool {
+	if p.Status != "active" || len(lanes) == 0 {
+		return false
+	}
+	for _, l := range lanes {
+		if !l.Done() || l.Holder != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// EndPlan moves a plan out of active. Without force it is refused while any
+// lane is held or short of the end of its queue, and the refusal names every
+// such lane. A plan already out of active is refused outright: re-ending one
+// would silently rewrite the outcome somebody recorded.
+func (s *Store) EndPlan(ctx context.Context, id, status string, force bool) error {
+	if !planStatuses[status] || status == "active" {
+		return fmt.Errorf("status %q is not one of done, abandoned", status)
+	}
+	p, err := s.GetPlan(ctx, id)
+	if err != nil {
+		return err
+	}
+	if p.Status != "active" {
+		return fmt.Errorf("plan %s is already %s", id, p.Status)
+	}
+	if !force {
+		lanes, err := s.ListLanes(ctx, id)
+		if err != nil {
+			return err
+		}
+		unfinished := &PlanUnfinishedError{PlanID: id}
+		for _, l := range lanes {
+			if l.Holder != "" {
+				unfinished.Held = append(unfinished.Held, l.Lane+" held by "+l.Holder)
+			}
+			if !l.Done() {
+				unfinished.Open = append(unfinished.Open,
+					fmt.Sprintf("%s at %d/%d", l.Lane, l.Cursor, len(l.Queue)))
+			}
+		}
+		if len(unfinished.Held) > 0 || len(unfinished.Open) > 0 {
+			return unfinished
+		}
+	}
+	q := s.rebind(`UPDATE execution_plan SET status = ? WHERE id = ? AND status = 'active'`)
+	res, err := s.db.ExecContext(ctx, q, status, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeletePlan removes a plan; lanes, sessions and handoffs cascade.
 func (s *Store) DeletePlan(ctx context.Context, id string) error {
 	q := s.rebind(`DELETE FROM execution_plan WHERE id = ?`)
