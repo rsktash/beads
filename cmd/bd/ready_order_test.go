@@ -159,27 +159,29 @@ func TestReadyOrder_LaneColumnRendered(t *testing.T) {
 
 func TestReadyOrder_TwoActivePlansUnion(t *testing.T) {
 	st := newReadyOrderStore(t)
-	alpha := readyOrderIssue(t, st, "ready-u-alpha", "alpha lane bead", 3, readyOrderEpoch.Add(time.Minute))
-	beta := readyOrderIssue(t, st, "ready-u-beta", "beta lane bead", 0, readyOrderEpoch)
+	alpha := readyOrderIssue(t, st, "ready-u-alpha", "alpha plan, late lane", 3, readyOrderEpoch.Add(time.Minute))
+	zeta := readyOrderIssue(t, st, "ready-u-zeta", "zeta plan, early lane", 0, readyOrderEpoch)
 	off := readyOrderIssue(t, st, "ready-u-off", "off queue bead", 1, readyOrderEpoch.Add(2*time.Minute))
-	readyOrderPlan(t, st, "plan-alpha", "active", store.PlanLane{Lane: "A", Queue: []string{alpha.ID}})
-	readyOrderPlan(t, st, "plan-beta", "active", store.PlanLane{Lane: "Z", Queue: []string{beta.ID}})
+	// Lane order alone would put zeta (lane A) before alpha (lane Z): the
+	// expected order holds only when plan id is compared before lane.
+	readyOrderPlan(t, st, "plan-alpha", "active", store.PlanLane{Lane: "Z", Queue: []string{alpha.ID}})
+	readyOrderPlan(t, st, "plan-zeta", "active", store.PlanLane{Lane: "A", Queue: []string{zeta.ID}})
 
 	out, errOut, err := runReadyOrder(t, true)
 	if err != nil {
 		t.Fatalf("ready: %v (%s)", err, errOut)
 	}
-	requireReadyOrder(t, readyOrderIDs(t, out), alpha.ID, beta.ID, off.ID)
+	requireReadyOrder(t, readyOrderIDs(t, out), alpha.ID, zeta.ID, off.ID)
 
 	var rows []map[string]any
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		t.Fatalf("decode ready JSON: %v\n%s", err, out)
 	}
-	if rows[0]["plan"] != "plan-alpha" || rows[0]["lane"] != "A" || rows[0]["index"] != float64(1) {
-		t.Fatalf("alpha slot fields = %v, want plan-alpha/A/1", rows[0])
+	if rows[0]["plan"] != "plan-alpha" || rows[0]["lane"] != "Z" || rows[0]["index"] != float64(1) {
+		t.Fatalf("alpha slot fields = %v, want plan-alpha/Z/1", rows[0])
 	}
-	if rows[1]["plan"] != "plan-beta" || rows[1]["lane"] != "Z" || rows[1]["index"] != float64(1) {
-		t.Fatalf("beta slot fields = %v, want plan-beta/Z/1", rows[1])
+	if rows[1]["plan"] != "plan-zeta" || rows[1]["lane"] != "A" || rows[1]["index"] != float64(1) {
+		t.Fatalf("zeta slot fields = %v, want plan-zeta/A/1", rows[1])
 	}
 	if _, exists := rows[2]["plan"]; exists {
 		t.Fatalf("off-queue row carries a plan field: %v", rows[2])

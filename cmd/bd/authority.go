@@ -245,8 +245,8 @@ func resolveBriefSince(cc *cmdCtx, raw, issueID string) (time.Time, string, erro
 // resolveOrderingHandoff sets the instant the brief's change ordering, its
 // * marks and its typed diff hang off. `--since handoff` has already
 // resolved it, and its refusals are feature 15's to make. On every other
-// brief an ambiguous plan or a missing handoff must not fail the render:
-// the marks and the diff are absent and one stderr line says why.
+// brief a missing handoff must not fail the render: the marks and the diff
+// are absent and one stderr line says why.
 func resolveOrderingHandoff(cc *cmdCtx, cmd *cobra.Command, since string, req *store.BriefRequest) error {
 	if req.IssueID == "" {
 		return nil

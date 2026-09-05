@@ -276,6 +276,41 @@ func TestActivePlanQueues_UnionsEveryActivePlan(t *testing.T) {
 	}
 }
 
+func TestActivePlanQueues_DuplicateBeadKeepsFirstPlanSlot(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	for _, plan := range []struct{ id, lane string }{
+		{"zeta-plan", "A"},
+		{"alpha-plan", "Z"},
+	} {
+		if err := st.CreatePlan(ctx, &store.ExecutionPlan{ID: plan.id, Title: plan.id}); err != nil {
+			t.Fatalf("CreatePlan %s: %v", plan.id, err)
+		}
+		if err := st.AddLane(ctx, &store.PlanLane{
+			PlanID: plan.id,
+			Lane:   plan.lane,
+			Queue:  []string{"bd-shared"},
+		}); err != nil {
+			t.Fatalf("AddLane %s/%s: %v", plan.id, plan.lane, err)
+		}
+	}
+
+	ids, slots, err := st.ActivePlanQueues(ctx)
+	if err != nil {
+		t.Fatalf("ActivePlanQueues: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != "alpha-plan" || ids[1] != "zeta-plan" {
+		t.Fatalf("plan ids = %v, want [alpha-plan zeta-plan]", ids)
+	}
+	want := store.QueueSlot{Plan: "alpha-plan", Lane: "Z", Index: 1}
+	if got := slots["bd-shared"]; got != want {
+		t.Fatalf("slot for bd-shared = %+v, want %+v (first plan in id order)", got, want)
+	}
+	if len(slots) != 1 {
+		t.Fatalf("union map holds %d entries, want 1: %v", len(slots), slots)
+	}
+}
+
 func TestLastHandoffForBead_FindsBeadInSecondPlan(t *testing.T) {
 	ctx := context.Background()
 	st := newPlanStore(t)

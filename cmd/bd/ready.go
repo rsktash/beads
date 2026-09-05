@@ -152,7 +152,7 @@ func readyJSONRows(rows []slimIssue, queue map[string]store.QueueSlot) []readyJS
 
 // printReadyPlanTable renders the ready table with lane positions. The PLAN
 // column leads only when the printed rows span more than one plan; a
-// single-plan render keeps today's columns byte for byte.
+// single-plan render keeps the single-plan columns byte for byte.
 func printReadyPlanTable(issues []beads.Issue, queue map[string]store.QueueSlot) {
 	if len(issues) == 0 {
 		return
