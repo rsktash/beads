@@ -122,7 +122,12 @@ function BoardComponent() {
     refetchInterval: 60_000,
   });
 
-  const activeIssues = active.data?.issues ?? [];
+  // A bead whose defer_until lies in the future is hidden from every column,
+  // matching what the ready query already does for the Open column.
+  const now = Date.now();
+  const activeIssues = (active.data?.issues ?? []).filter(
+    (i) => !i.defer_until || new Date(i.defer_until).getTime() <= now,
+  );
   const closedIssues = closed.data?.issues ?? [];
   const epics = activeIssues.filter((i) => i.issue_type === "epic").length;
   const byStatus = group(activeIssues, (i) => i.status);
