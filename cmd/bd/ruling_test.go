@@ -852,3 +852,98 @@ func TestRuling_ParkMutualExclusive(t *testing.T) {
 	}
 	_ = dsn
 }
+
+// --reach: a ruling that answers a question lands where the answer binds.
+// Default is the question's own bead; --reach epic lifts it to the nearest
+// epic above; --reach project files it project-scoped. A positional bead that
+// disagrees with the resolved reach is refused, and nothing is written.
+func TestRuling_Reach(t *testing.T) {
+	dsn, st := newTempRulingStore(t, "bd")
+	ctx := context.Background()
+	epic := &beads.Issue{Title: "reach epic", Type: beads.TypeEpic, Status: beads.StatusOpen, Priority: 1}
+	if err := st.CreateIssue(ctx, epic); err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	task := &beads.Issue{Title: "reach task", Type: beads.TypeTask, Status: beads.StatusOpen, Priority: 1}
+	if err := st.CreateChild(ctx, epic.ID, task, nil); err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	other := mkIssueForRuling(t, st, "unrelated bead")
+	mkQ := func(text string) string {
+		q := &beads.Statement{Kind: "question", IssueID: &task.ID, Text: text, FiledBy: "tester:owner", Status: "active", Scope: "inherit"}
+		if err := st.CreateStatement(ctx, q); err != nil {
+			t.Fatalf("create q: %v", err)
+		}
+		return q.ID
+	}
+	qTask, qEpic, qProject, qRefuse := mkQ("q task"), mkQ("q epic"), mkQ("q project"), mkQ("q refuse")
+	_ = st.Close()
+	t.Setenv("BD_ACTOR", "coordinator")
+
+	rulingBead := func(out string) *string {
+		t.Helper()
+		st2, _ := store.Open(ctx, dsn)
+		defer st2.Close()
+		r, err := st2.GetStatement(ctx, strings.TrimSpace(out))
+		if err != nil {
+			t.Fatalf("get ruling: %v", err)
+		}
+		return r.IssueID
+	}
+
+	// No bead, no --reach: the question's own bead.
+	out, _, err := runRulingAdd(t, []string{"add", "task-local answer", "--answers", qTask})
+	if err != nil {
+		t.Fatalf("default reach: %v", err)
+	}
+	if b := rulingBead(out); b == nil || *b != task.ID {
+		t.Fatalf("default reach should be the question's bead %s, got %v", task.ID, b)
+	}
+
+	// --reach epic: the nearest epic above the question's bead.
+	out, _, err = runRulingAdd(t, []string{"add", "epic-wide answer", "--answers", qEpic, "--reach", "epic"})
+	if err != nil {
+		t.Fatalf("reach epic: %v", err)
+	}
+	if b := rulingBead(out); b == nil || *b != epic.ID {
+		t.Fatalf("reach epic should be %s, got %v", epic.ID, b)
+	}
+
+	// --reach project: project-scoped, issue_id NULL.
+	out, _, err = runRulingAdd(t, []string{"add", "project-wide answer", "--answers", qProject, "--reach", "project"})
+	if err != nil {
+		t.Fatalf("reach project: %v", err)
+	}
+	if b := rulingBead(out); b != nil {
+		t.Fatalf("reach project should be project-scoped, got %s", *b)
+	}
+
+	// Refusals write nothing.
+	before := countStatements(t, dsn)
+	refused := [][]string{
+		{"add", other.ID, "wrong bead", "--answers", qRefuse},                    // positional disagrees with the question's bead
+		{"add", epic.ID, "epic without reach", "--answers", qRefuse},             // the epic needs --reach epic
+		{"add", other.ID, "project with bead", "--answers", qRefuse, "--reach", "project"},
+		{"add", task.ID, "reach without answers", "--topic", "reach-topic", "--reach", "epic"},
+		{"add", "bad reach", "--answers", qRefuse, "--reach", "galaxy"},
+	}
+	for _, args := range refused {
+		if _, _, err := runRulingAdd(t, args); err == nil {
+			t.Fatalf("expected refusal for %v", args)
+		} else if !strings.Contains(err.Error(), "--reach") {
+			t.Fatalf("refusal for %v should name --reach, got: %v", args, err)
+		}
+	}
+	if after := countStatements(t, dsn); after != before {
+		t.Fatalf("refusals should write nothing, before %d after %d", before, after)
+	}
+
+	// A positional bead that agrees with the reach is accepted.
+	out, _, err = runRulingAdd(t, []string{"add", epic.ID, "epic named and reached", "--answers", qRefuse, "--reach", "epic"})
+	if err != nil {
+		t.Fatalf("epic named with --reach epic: %v", err)
+	}
+	if b := rulingBead(out); b == nil || *b != epic.ID {
+		t.Fatalf("named epic should stand, got %v", b)
+	}
+}

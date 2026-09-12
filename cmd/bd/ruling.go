@@ -56,6 +56,7 @@ func newRulingAddCmd() *cobra.Command {
 		parkFlag   bool
 		verbatim   string
 		binds      string
+		reach      string
 		topic      string
 		concern    string
 		law        string
@@ -66,6 +67,11 @@ func newRulingAddCmd() *cobra.Command {
 		Use:   "add [<issue-id>] <text> --topic <slug>",
 		Short: "File a ruling (actor-gated: BD_ACTOR=executor is refused)",
 		Long: `File a ruling. With one arg, files a project-scoped ruling (issue_id NULL). With two args, first is issue id, second is text.
+
+With --answers the bead is derived from the question: the ruling lands on the
+question's own bead, on the nearest epic above it with --reach epic, or
+project-scoped with --reach project. A positional bead that disagrees with the
+resolved reach is refused, so a task's answer cannot land on its epic by habit.
 
 Flags --defer, --park and --close atomically update the bead's state in the same transaction as the ruling row.
 --park defers the bead to the far future (9999-12-31) and adds label 'parked'; it is deferred+parked label, no new status.
@@ -110,6 +116,21 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 			}
 			if path, line, ok := store.BareLineCitation(text); ok {
 				return fmt.Errorf("cite the symbol: %s::<symbol>:%d, not %s:%d", path, line, path, line)
+			}
+
+			cc, err := openStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer cc.store.Close()
+
+			// The reach: where an answer binds. Resolved before every check
+			// that reads the bead, so --close, --binds and --doctrine see the
+			// derived bead, not the absent positional.
+			answersID := strings.TrimSpace(answers)
+			issueID, err = resolveRulingReach(cc, issueID, answersID, strings.TrimSpace(reach))
+			if err != nil {
+				return err
 			}
 
 			// A doctrine is a project law. An issue id would file it on a
@@ -183,13 +204,6 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 				}
 				st.BindsID = &b
 			}
-			// answers is handled via store transaction param, not via st.AnsweredBy directly,
-			// but we also support st.AnsweredBy path for the two-param store API.
-			answersID := ""
-			if f.Changed("answers") && answers != "" {
-				answersID = strings.TrimSpace(answers)
-			}
-
 			// Build issue update if needed
 			var upd *store.IssueUpdate
 			if hasDefer {
@@ -207,12 +221,6 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 				closed := beads.StatusClosed
 				upd = &store.IssueUpdate{Status: &closed}
 			}
-
-			cc, err := openStore(cmd)
-			if err != nil {
-				return err
-			}
-			defer cc.store.Close()
 
 			// Topic before the duplicate listing: a ruling with no topic is
 			// refused with the catalogue, and printing both menus at once
@@ -264,12 +272,83 @@ Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question i
 	cmd.Flags().BoolVar(&parkFlag, "park", false, "park the bead (defer far future + label 'parked', atomic with ruling)")
 	cmd.Flags().StringVar(&verbatim, "verbatim", "", "the owner's verbatim sentence backing this ruling (stored untouched, never in the default headline)")
 	cmd.Flags().StringVar(&binds, "binds", "", "attach this ruling explicitly to a second bead (issue-scoped rulings only)")
+	cmd.Flags().StringVar(&reach, "reach", "", "with --answers: where the answer binds — task (default: the question's bead), epic (the nearest epic above it) or project")
 	cmd.Flags().StringVar(&topic, "topic", "", "topic slug this ruling belongs to (required unless --answers supplies it)")
 	cmd.Flags().StringVar(&concern, "concern", "", "concern for a project-scoped ruling, which has no bead to read areas from")
 	cmd.Flags().BoolVar(&doctrine, "doctrine", false, "file a standing law: a project-scoped ruling with an area, a --law and a --rationale")
 	cmd.Flags().StringVar(&law, "law", "", "the law itself: one imperative sentence ending in a full stop (max 200 characters)")
 	cmd.Flags().StringVar(&rationale, "rationale", "", "why the law holds, and the pointers behind it (max 600 characters)")
 	return cmd
+}
+
+// resolveRulingReach returns the bead a ruling lands on. Without --answers it
+// is the positional bead as given (nil = project-scoped) and --reach is
+// refused. With --answers the question's bead is the default, --reach epic
+// lifts it to the nearest epic above, --reach project drops it to project
+// scope; a positional bead that disagrees with that result is refused.
+func resolveRulingReach(cc *cmdCtx, positional *string, answersID, reach string) (*string, error) {
+	if answersID == "" {
+		if reach != "" {
+			return nil, fmt.Errorf("--reach is only for a ruling that answers a question: pair it with --answers Q-n")
+		}
+		return positional, nil
+	}
+	switch reach {
+	case "", "task", "epic", "project":
+	default:
+		return nil, fmt.Errorf("invalid --reach %q (task|epic|project)", reach)
+	}
+	q, err := cc.store.GetStatement(cc.ctx, answersID)
+	if err != nil {
+		return nil, fmt.Errorf("question %s not found: %w", answersID, err)
+	}
+	if q.IssueID == nil {
+		// A project-scoped question has no bead to derive from; only a
+		// project-scoped answer fits it.
+		if positional != nil || (reach != "" && reach != "project") {
+			return nil, fmt.Errorf("%s is project-scoped; its answer takes no bead and no --reach but project", answersID)
+		}
+		return nil, nil
+	}
+	var target *string
+	switch reach {
+	case "", "task":
+		target = q.IssueID
+	case "epic":
+		epicID, err := nearestEpicAbove(cc, *q.IssueID)
+		if err != nil {
+			return nil, err
+		}
+		target = &epicID
+	case "project":
+		if positional != nil {
+			return nil, fmt.Errorf("--reach project files project-scoped and takes no issue id (got %s)", *positional)
+		}
+		return nil, nil
+	}
+	if positional != nil && *positional != *target {
+		return nil, fmt.Errorf("%s sits on %s, so its answer lands there by default; a ruling on %s needs --reach epic (its epic) or --reach project", answersID, *q.IssueID, *positional)
+	}
+	return target, nil
+}
+
+// nearestEpicAbove walks the parent-child chain upward from issueID and returns
+// the first bead of type epic.
+func nearestEpicAbove(cc *cmdCtx, issueID string) (string, error) {
+	ancestors, err := cc.store.Ancestors(cc.ctx, issueID)
+	if err != nil {
+		return "", err
+	}
+	for _, id := range ancestors {
+		i, err := cc.store.GetIssue(cc.ctx, id)
+		if err != nil {
+			return "", err
+		}
+		if i.Type == beads.TypeEpic {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("--reach epic: %s has no epic above it", issueID)
 }
 
 func stampStatementHeadSHA(cc *cmdCtx, id string) error {
