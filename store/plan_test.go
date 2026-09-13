@@ -655,3 +655,149 @@ func TestEndPlan_SurvivingPlanTakesOverTheSharedSlot(t *testing.T) {
 		t.Fatalf("ended plan's bead kept slot %+v", got)
 	}
 }
+
+// TestTakeover_HeldLaneMovesHolderAndRecordsHandoff covers the typed takeover:
+// the new session holds the lane, the cursor does not move, and the row the
+// takeover leaves behind is attributed to the holder it displaced.
+func TestTakeover_HeldLaneMovesHolderAndRecordsHandoff(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+	if err := st.ClaimLane(ctx, "night-run-0904", "A", "sess-dead"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	before, err := st.GetLane(ctx, "night-run-0904", "A")
+	if err != nil {
+		t.Fatalf("GetLane: %v", err)
+	}
+
+	old, err := st.ClaimLaneTakeover(ctx, "night-run-0904", "A", "sess-new", "ph-take1")
+	if err != nil {
+		t.Fatalf("takeover: %v", err)
+	}
+	if old != "sess-dead" {
+		t.Fatalf("displaced holder = %q, want sess-dead", old)
+	}
+
+	lane, err := st.GetLane(ctx, "night-run-0904", "A")
+	if err != nil {
+		t.Fatalf("GetLane: %v", err)
+	}
+	if lane.Holder != "sess-new" {
+		t.Fatalf("holder = %q, want sess-new", lane.Holder)
+	}
+	if lane.ClaimedAt == nil {
+		t.Fatal("takeover must stamp claimed_at")
+	}
+	if lane.Cursor != before.Cursor {
+		t.Fatalf("cursor = %d, want %d (unchanged)", lane.Cursor, before.Cursor)
+	}
+
+	last, err := st.LastHandoffPerLane(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("LastHandoffPerLane: %v", err)
+	}
+	h, ok := last["A"]
+	if !ok {
+		t.Fatal("takeover left no handoff row on lane A")
+	}
+	if h.SessionID != "sess-dead" {
+		t.Fatalf("handoff session = %q, want the displaced holder sess-dead", h.SessionID)
+	}
+	if h.NextID != before.Next() {
+		t.Fatalf("next = %q, want %q (the lane's current next)", h.NextID, before.Next())
+	}
+	if len(h.Done) != 0 || len(h.Parked) != 0 {
+		t.Fatalf("takeover row must carry no done or parked pairs: done=%v parked=%v", h.Done, h.Parked)
+	}
+	if strings.Count(h.Thread, "\n") != 0 {
+		t.Fatalf("thread must be exactly one line, got %q", h.Thread)
+	}
+	wantPrefix := "taken over by session sess-new at "
+	wantSuffix := "; holder sess-dead had no live session"
+	if !strings.HasPrefix(h.Thread, wantPrefix) || !strings.HasSuffix(h.Thread, wantSuffix) {
+		t.Fatalf("thread = %q, want %q<ts>%q", h.Thread, wantPrefix, wantSuffix)
+	}
+	ts := strings.TrimSuffix(strings.TrimPrefix(h.Thread, wantPrefix), wantSuffix)
+	if _, err := time.Parse(time.RFC3339, ts); err != nil {
+		t.Fatalf("thread timestamp %q is not RFC3339: %v", ts, err)
+	}
+}
+
+// TestTakeover_UnheldLaneIsAPlainClaim: nothing was displaced, so nothing is
+// recorded.
+func TestTakeover_UnheldLaneIsAPlainClaim(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+
+	old, err := st.ClaimLaneTakeover(ctx, "night-run-0904", "A", "sess-first", "ph-take0")
+	if err != nil {
+		t.Fatalf("takeover of an unheld lane should be a plain claim: %v", err)
+	}
+	if old != "" {
+		t.Fatalf("displaced holder = %q, want empty", old)
+	}
+	lane, err := st.GetLane(ctx, "night-run-0904", "A")
+	if err != nil {
+		t.Fatalf("GetLane: %v", err)
+	}
+	if lane.Holder != "sess-first" {
+		t.Fatalf("holder = %q, want sess-first", lane.Holder)
+	}
+	hs, err := st.ListHandoffs(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("ListHandoffs: %v", err)
+	}
+	if len(hs) != 0 {
+		t.Fatalf("a plain claim must record no handoff row, got %d", len(hs))
+	}
+}
+
+// TestTakeover_SecondTakeoverDisplacesTheFirst: the taker becomes the holder a
+// later taker must displace in turn, and a plain claim still loses to it.
+func TestTakeover_SecondTakeoverDisplacesTheFirst(t *testing.T) {
+	ctx := context.Background()
+	st := newPlanStore(t)
+	planFixture(t, st, "night-run-0904", "A")
+	if err := st.ClaimLane(ctx, "night-run-0904", "A", "sess-dead"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := st.ClaimLaneTakeover(ctx, "night-run-0904", "A", "sess-two", "ph-take1"); err != nil {
+		t.Fatalf("first takeover: %v", err)
+	}
+
+	err := st.ClaimLane(ctx, "night-run-0904", "A", "sess-three")
+	var held *store.LaneHeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("a plain claim after a takeover must be refused, got %v", err)
+	}
+	if held.Holder != "sess-two" {
+		t.Fatalf("held by %q, want sess-two", held.Holder)
+	}
+
+	old, err := st.ClaimLaneTakeover(ctx, "night-run-0904", "A", "sess-three", "ph-take2")
+	if err != nil {
+		t.Fatalf("second takeover: %v", err)
+	}
+	if old != "sess-two" {
+		t.Fatalf("second takeover displaced %q, want sess-two", old)
+	}
+	hs, err := st.ListHandoffs(ctx, "night-run-0904")
+	if err != nil {
+		t.Fatalf("ListHandoffs: %v", err)
+	}
+	if len(hs) != 2 {
+		t.Fatalf("handoff rows = %d, want 2 (one per takeover)", len(hs))
+	}
+	if hs[1].SessionID != "sess-two" {
+		t.Fatalf("second row attributed to %q, want sess-two", hs[1].SessionID)
+	}
+	lane, err := st.GetLane(ctx, "night-run-0904", "A")
+	if err != nil {
+		t.Fatalf("GetLane: %v", err)
+	}
+	if lane.Holder != "sess-three" {
+		t.Fatalf("holder = %q, want sess-three", lane.Holder)
+	}
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -192,29 +193,72 @@ func newPlanJoinCmd() *cobra.Command {
 
 func newPlanClaimCmd() *cobra.Command {
 	var session, lane string
+	var takeover bool
 	cmd := &cobra.Command{
 		Use:   "claim <plan>",
 		Short: "Take a lane for a session",
-		Args:  cobra.ExactArgs(1),
+		Long: `Take a lane for a session. A lane another session holds is refused.
+
+--takeover releases a holder the caller knows is gone: bd never guesses at
+liveness. The displaced holder gets a handoff row of its own carrying the
+lane's current next id and one thread line naming the taker, so the release
+reads in bd plan show as a typed entry rather than an unexplained new holder.
+The cursor does not move. On an unheld lane it is a plain claim.
+
+Actor gating: BD_ACTOR=executor cannot take over a lane; an executor releases
+its own lane with bd plan handoff. BD_ACTOR=coordinator or unset (owner) is
+allowed.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			planID := strings.TrimSpace(args[0])
+			identity, isExecutor := resolveActor()
+			if takeover && isExecutor {
+				return fmt.Errorf("--takeover: %w", executorRefusal(identity))
+			}
 			cc, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
 			defer cc.store.Close()
-			if err := cc.store.ClaimLane(cc.ctx, planID, lane, session); err != nil {
+			if !takeover {
+				if err := cc.store.ClaimLane(cc.ctx, planID, lane, session); err != nil {
+					return err
+				}
+				return reportClaim(cmd, planID, lane, session, "")
+			}
+			handoffID := idgen.GenerateHashID("ph", planID+"|"+lane, identity, session, time.Now(), 8, 0)
+			old, err := cc.store.ClaimLaneTakeover(cc.ctx, planID, lane, session, handoffID)
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "session %s holds lane %s of %s\n", session, lane, planID)
-			return nil
+			return reportClaim(cmd, planID, lane, session, old)
 		},
 	}
 	cmd.Flags().StringVar(&session, "session", "", "session id")
 	cmd.Flags().StringVar(&lane, "lane", "", "lane to take")
+	cmd.Flags().BoolVar(&takeover, "takeover", false, "take a lane held by a session that no longer runs; records a typed handoff under the old holder")
 	_ = cmd.MarkFlagRequired("session")
 	_ = cmd.MarkFlagRequired("lane")
 	return cmd
+}
+
+// reportClaim writes the claim's outcome. A takeover names the session it
+// displaced, in the text line and in --json alike; a plain claim has none.
+func reportClaim(cmd *cobra.Command, planID, lane, session, old string) error {
+	if flagJSON {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+			Plan          string `json:"plan"`
+			Lane          string `json:"lane"`
+			Session       string `json:"session"`
+			TakenOverFrom string `json:"taken_over_from,omitempty"`
+		}{Plan: planID, Lane: lane, Session: session, TakenOverFrom: old})
+	}
+	if old != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "session %s holds lane %s of %s (taken over from %s)\n", session, lane, planID, old)
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "session %s holds lane %s of %s\n", session, lane, planID)
+	return nil
 }
 
 func newPlanHandoffCmd() *cobra.Command {

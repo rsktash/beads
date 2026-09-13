@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -529,5 +530,119 @@ func TestPlan_EndOpenToExecutor(t *testing.T) {
 	// Every other plan verb is open to an executor; ending is the same class.
 	if out, err := runPlan(t, "done", planID); err != nil {
 		t.Fatalf("an executor must be able to end a plan: %v (%s)", err, out)
+	}
+}
+
+// TestPlan_ClaimWithoutTakeoverKeepsTheHeldError: the flag existing changes
+// nothing for a claim that does not pass it.
+func TestPlan_ClaimWithoutTakeoverKeepsTheHeldError(t *testing.T) {
+	st := newTempPlanStore(t)
+	planID, _ := heldLanePlan(t, st)
+
+	out, err := runPlan(t, "claim", planID, "--lane", "A", "--session", "sess-2")
+	if err == nil {
+		t.Fatalf("claiming a held lane must fail, got %q", out)
+	}
+	if !strings.HasPrefix(err.Error(), "lane A is held by session sess-1 since ") {
+		t.Fatalf("error = %q", err.Error())
+	}
+	lane, err := st.GetLane(context.Background(), planID, "A")
+	if err != nil {
+		t.Fatalf("GetLane: %v", err)
+	}
+	if lane.Holder != "sess-1" {
+		t.Fatalf("holder = %q, want sess-1 (a refused claim moves nothing)", lane.Holder)
+	}
+	hs, err := st.ListHandoffs(context.Background(), planID)
+	if err != nil {
+		t.Fatalf("ListHandoffs: %v", err)
+	}
+	if len(hs) != 0 {
+		t.Fatalf("a refused claim must record nothing, got %d handoff rows", len(hs))
+	}
+}
+
+// TestPlan_TakeoverRefusedForExecutor: releasing another session's lane is the
+// coordinator's call, and the refusal names the flag.
+func TestPlan_TakeoverRefusedForExecutor(t *testing.T) {
+	t.Setenv("BD_ACTOR", "executor")
+	st := newTempPlanStore(t)
+	planID, _ := heldLanePlan(t, st)
+
+	out, err := runPlan(t, "claim", planID, "--lane", "A", "--session", "sess-2", "--takeover")
+	if err == nil {
+		t.Fatalf("--takeover must be refused for an executor, got %q", out)
+	}
+	if !strings.Contains(err.Error(), "--takeover") {
+		t.Fatalf("refusal must name the flag, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "BD_ACTOR=executor") {
+		t.Fatalf("refusal must name the actor, got %q", err.Error())
+	}
+	lane, err := st.GetLane(context.Background(), planID, "A")
+	if err != nil {
+		t.Fatalf("GetLane: %v", err)
+	}
+	if lane.Holder != "sess-1" {
+		t.Fatalf("holder = %q, want sess-1 (a refused takeover moves nothing)", lane.Holder)
+	}
+}
+
+// TestPlan_TakeoverReportsAndShowsTheOldHolder: the output names the displaced
+// session, --json carries it, and `plan show` renders the typed row.
+func TestPlan_TakeoverReportsAndShowsTheOldHolder(t *testing.T) {
+	t.Setenv("BD_ACTOR", "coordinator")
+	st := newTempPlanStore(t)
+	planID, ids := heldLanePlan(t, st)
+
+	out, err := runPlan(t, "claim", planID, "--lane", "A", "--session", "sess-2", "--takeover")
+	if err != nil {
+		t.Fatalf("takeover: %v (%s)", err, out)
+	}
+	want := "session sess-2 holds lane A of " + planID + " (taken over from sess-1)\n"
+	if out != want {
+		t.Fatalf("output\n got %q\nwant %q", out, want)
+	}
+
+	oldJSON := flagJSON
+	flagJSON = true
+	t.Cleanup(func() { flagJSON = oldJSON })
+	out, err = runPlan(t, "claim", planID, "--lane", "A", "--session", "sess-3", "--takeover")
+	if err != nil {
+		t.Fatalf("json takeover: %v (%s)", err, out)
+	}
+	var payload struct {
+		Plan          string `json:"plan"`
+		Lane          string `json:"lane"`
+		Session       string `json:"session"`
+		TakenOverFrom string `json:"taken_over_from"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("--takeover --json output is not JSON: %v (%s)", err, out)
+	}
+	if payload.TakenOverFrom != "sess-2" {
+		t.Fatalf("taken_over_from = %q, want sess-2", payload.TakenOverFrom)
+	}
+	if payload.Session != "sess-3" || payload.Lane != "A" || payload.Plan != planID {
+		t.Fatalf("json payload = %+v", payload)
+	}
+	flagJSON = oldJSON
+
+	out, err = runPlan(t, "show", planID)
+	if err != nil {
+		t.Fatalf("plan show: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "  holder sess-3  ") {
+		t.Fatalf("lane line should name the new holder:\n%s", out)
+	}
+	if !strings.Contains(out, "handoff ") || !strings.Contains(out, " sess-2\n") {
+		t.Fatalf("show should render the last takeover under the old holder sess-2:\n%s", out)
+	}
+	if !strings.Contains(out, "      thread: taken over by session sess-3 at ") ||
+		!strings.Contains(out, "; holder sess-2 had no live session\n") {
+		t.Fatalf("show should render the takeover thread line:\n%s", out)
+	}
+	if !strings.Contains(out, "next "+ids[0]) {
+		t.Fatalf("the cursor must not move on a takeover:\n%s", out)
 	}
 }

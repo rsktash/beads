@@ -420,6 +420,13 @@ func (s *Store) ClaimLane(ctx context.Context, planID, lane, sessionID string) e
 	if n > 0 {
 		return nil
 	}
+	return s.heldError(ctx, planID, lane)
+}
+
+// heldError reads the lane's current holder and reports the refusal a lost
+// claim returns. The read happens only after an UPDATE affected zero rows, so
+// the message names the session that actually won.
+func (s *Store) heldError(ctx context.Context, planID, lane string) error {
 	held, err := s.GetLane(ctx, planID, lane)
 	if err != nil {
 		return err
@@ -429,6 +436,103 @@ func (s *Store) ClaimLane(ctx context.Context, planID, lane, sessionID string) e
 		e.ClaimedAt = *held.ClaimedAt
 	}
 	return e
+}
+
+// ClaimLaneTakeover takes a lane whose holding session no longer runs. bd does
+// not decide that: the caller does, and the takeover is typed rather than a
+// silent overwrite — the displaced holder gets a handoff row of its own, so
+// the release is readable in plan show. An unheld lane is a plain claim and
+// records nothing. The returned session is the displaced holder, empty when
+// there was none.
+//
+// The whole verb is one transaction: the holder is read, the UPDATE is
+// conditional on that same holder, and zero rows affected means another
+// session moved in between — the same refusal a plain claim returns.
+func (s *Store) ClaimLaneTakeover(ctx context.Context, planID, lane, sessionID, handoffID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", fmt.Errorf("session id is required")
+	}
+	if strings.TrimSpace(handoffID) == "" {
+		return "", fmt.Errorf("handoff id is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	read := s.rebind(`SELECT plan_id, lane, queue, cursor, mode, rulings, holder, claimed_at FROM plan_lane WHERE plan_id = ? AND lane = ?`)
+	l, err := scanLane(tx.QueryRowContext(ctx, read, planID, lane))
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+
+	now := time.Now().UTC()
+	if l.Holder == "" {
+		take := s.rebind(`UPDATE plan_lane SET holder = ?, claimed_at = ? WHERE plan_id = ? AND lane = ? AND holder IS NULL`)
+		if err := s.takeLane(ctx, tx, take, planID, lane, sessionID, now, planID, lane); err != nil {
+			return "", err
+		}
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+		committed = true
+		return "", nil
+	}
+
+	old := l.Holder
+	take := s.rebind(`UPDATE plan_lane SET holder = ?, claimed_at = ? WHERE plan_id = ? AND lane = ? AND holder = ?`)
+	if err := s.takeLane(ctx, tx, take, planID, lane, sessionID, now, planID, lane, old); err != nil {
+		return "", err
+	}
+
+	// The cursor does not move: the taker resumes where the dead session stood.
+	h := &PlanHandoff{
+		ID:        handoffID,
+		PlanID:    planID,
+		Lane:      lane,
+		SessionID: old,
+		CreatedAt: now,
+		NextID:    l.Next(),
+		Thread: fmt.Sprintf("taken over by session %s at %s; holder %s had no live session",
+			sessionID, now.Format(time.RFC3339), old),
+	}
+	if err := s.insertHandoff(ctx, tx, h); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	committed = true
+	return old, nil
+}
+
+// takeLane runs a conditional lane UPDATE and reports a lane that moved under
+// it as the held-by refusal. The holder is read after the rollback, outside
+// the transaction, so the message names the winner rather than the snapshot
+// the transaction still sees.
+func (s *Store) takeLane(ctx context.Context, tx *sql.Tx, query, planID, lane string, args ...any) error {
+	res, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_ = tx.Rollback()
+	return s.heldError(ctx, planID, lane)
 }
 
 // Handoff appends the typed entry and releases the lane in one transaction,
@@ -468,9 +572,7 @@ func (s *Store) Handoff(ctx context.Context, h *PlanHandoff, cursor int) error {
 		return fmt.Errorf("%w: session %s cannot hand off lane %s", ErrNotHolder, h.SessionID, h.Lane)
 	}
 
-	ins := s.rebind(`INSERT INTO plan_handoff (id, plan_id, lane, session_id, created_at, done_ids, next_id, parked, thread) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if _, err := tx.ExecContext(ctx, ins, h.ID, h.PlanID, h.Lane, h.SessionID, h.CreatedAt,
-		joinList(h.Done), h.NextID, joinList(h.Parked), h.Thread); err != nil {
+	if err := s.insertHandoff(ctx, tx, h); err != nil {
 		return err
 	}
 
@@ -479,6 +581,16 @@ func (s *Store) Handoff(ctx context.Context, h *PlanHandoff, cursor int) error {
 	}
 	committed = true
 	return nil
+}
+
+// insertHandoff writes one typed entry. Every path that records a handoff —
+// the session's own release and a takeover of a dead session's lane — goes
+// through this single INSERT.
+func (s *Store) insertHandoff(ctx context.Context, tx *sql.Tx, h *PlanHandoff) error {
+	ins := s.rebind(`INSERT INTO plan_handoff (id, plan_id, lane, session_id, created_at, done_ids, next_id, parked, thread) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	_, err := tx.ExecContext(ctx, ins, h.ID, h.PlanID, h.Lane, h.SessionID, h.CreatedAt,
+		joinList(h.Done), h.NextID, joinList(h.Parked), h.Thread)
+	return err
 }
 
 // ListHandoffs reads a plan's handoff entries, newest last.
