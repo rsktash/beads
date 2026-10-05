@@ -122,7 +122,7 @@ func authorFromFiledBy(filedBy string) string {
 // statementSelectColumns is the shared column list for statements reads
 // (GetStatement, ListStatements), kept in lockstep with scanStatementRow and
 // scanStatementRows below.
-const statementSelectColumns = `id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id, source_issue_id`
+const statementSelectColumns = `id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id, source_issue_id, closed_by`
 
 // insertStatementSQL is the column list for statements inserts.
 const insertStatementSQL = `INSERT INTO statements (id, kind, issue_id, text, created_at, filed_by, status, scope, supersedes_id, answered_by, source_comment_id, evidence, topic, workspace, concern, law, rationale, verbatim, author, session_id, msg_id, tool_use_id, retire_note, changed_at, binds_id, source_issue_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -691,6 +691,51 @@ func (s *Store) CloseQuestion(ctx context.Context, questionID, status, evidence,
 	return nil
 }
 
+// CloseFinding closes a finding settled by a ruling: status becomes answered,
+// answered_by names the ruling, closed_by records the closing actor and
+// retire_note the optional note. The UPDATE is guarded on the row still being
+// an active finding, so a concurrent close cannot double-apply. It stamps
+// changed_at and bumps the finding's bead.
+func (s *Store) CloseFinding(ctx context.Context, findingID, rulingID, closedBy, note string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	at := time.Now().UTC()
+	q := s.rebind(`UPDATE statements SET status = 'answered', answered_by = ?, closed_by = ?, retire_note = ?, changed_at = ? WHERE id = ? AND kind = 'finding' AND status = 'active'`)
+	res, err := tx.ExecContext(ctx, q, rulingID, closedBy, note, at, findingID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+
+	issueID, err := statementIssueIDTx(ctx, tx, s, findingID)
+	if err != nil {
+		return err
+	}
+	if issueID.Valid && issueID.String != "" {
+		if err := touchIssueTx(ctx, tx, s, issueID.String, at); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 // ListStatements returns statements matching the filter, newest first.
 func (s *Store) ListStatements(ctx context.Context, f StatementFilter) ([]beads.Statement, error) {
 	base := `SELECT ` + statementSelectColumns + ` FROM statements`
@@ -953,14 +998,14 @@ func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
 	var (
 		id, kind, text, filedBy, status, scope, evidence            string
 		topic, workspace, concern, law, rationale, verbatim, author string
-		sessionID, msgID, toolUseID, retireNote                     string
+		sessionID, msgID, toolUseID, retireNote, closedBy           string
 		createdAt                                                   time.Time
 		nsIssue, nsSupersedes, nsAnswered, nsSource, nsBinds        sql.NullString
 		nsSourceIssue                                               sql.NullString
 		ntChanged                                                   sql.NullTime
 	)
 	if err := row.Scan(&id, &kind, &nsIssue, &text, &createdAt, &filedBy, &status, &scope, &nsSupersedes, &nsAnswered, &nsSource, &evidence,
-		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds, &nsSourceIssue); err != nil {
+		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds, &nsSourceIssue, &closedBy); err != nil {
 		return nil, err
 	}
 	return &beads.Statement{
@@ -990,6 +1035,7 @@ func scanStatementRow(row *sql.Row) (*beads.Statement, error) {
 		ChangedAt:       nullTimeToPtr(ntChanged),
 		BindsID:         nullStringToPtr(nsBinds),
 		SourceIssueID:   nullStringToPtr(nsSourceIssue),
+		ClosedBy:        closedBy,
 	}, nil
 }
 
@@ -997,14 +1043,14 @@ func scanStatementRows(rows *sql.Rows) (*beads.Statement, error) {
 	var (
 		id, kind, text, filedBy, status, scope, evidence            string
 		topic, workspace, concern, law, rationale, verbatim, author string
-		sessionID, msgID, toolUseID, retireNote                     string
+		sessionID, msgID, toolUseID, retireNote, closedBy           string
 		createdAt                                                   time.Time
 		nsIssue, nsSupersedes, nsAnswered, nsSource, nsBinds        sql.NullString
 		nsSourceIssue                                               sql.NullString
 		ntChanged                                                   sql.NullTime
 	)
 	if err := rows.Scan(&id, &kind, &nsIssue, &text, &createdAt, &filedBy, &status, &scope, &nsSupersedes, &nsAnswered, &nsSource, &evidence,
-		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds, &nsSourceIssue); err != nil {
+		&topic, &workspace, &concern, &law, &rationale, &verbatim, &author, &sessionID, &msgID, &toolUseID, &retireNote, &ntChanged, &nsBinds, &nsSourceIssue, &closedBy); err != nil {
 		return nil, err
 	}
 	return &beads.Statement{
@@ -1034,6 +1080,7 @@ func scanStatementRows(rows *sql.Rows) (*beads.Statement, error) {
 		ChangedAt:       nullTimeToPtr(ntChanged),
 		BindsID:         nullStringToPtr(nsBinds),
 		SourceIssueID:   nullStringToPtr(nsSourceIssue),
+		ClosedBy:        closedBy,
 	}, nil
 }
 

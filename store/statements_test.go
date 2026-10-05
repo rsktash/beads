@@ -36,8 +36,8 @@ func TestMigrationVersion4Applied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus: %v", err)
 	}
-	if len(status) != 13 {
-		t.Fatalf("expected 13 migrations, got %d: %+v", len(status), status)
+	if len(status) != 14 {
+		t.Fatalf("expected 14 migrations, got %d: %+v", len(status), status)
 	}
 	for _, m := range status {
 		if !m.Applied {
@@ -75,8 +75,8 @@ func TestMigrationIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus second: %v", err)
 	}
-	if len(status) != 13 {
-		t.Fatalf("expected 13 after second open, got %d", len(status))
+	if len(status) != 14 {
+		t.Fatalf("expected 14 after second open, got %d", len(status))
 	}
 }
 
@@ -576,8 +576,8 @@ func TestPostgresStatements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration status pg: %v", err)
 	}
-	if len(status) != 13 {
-		t.Fatalf("expected 13 migrations pg, got %d", len(status))
+	if len(status) != 14 {
+		t.Fatalf("expected 14 migrations pg, got %d", len(status))
 	}
 	var cnt int
 	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM resolved_statements`).Scan(&cnt); err != nil {

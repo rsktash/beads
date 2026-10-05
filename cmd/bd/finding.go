@@ -18,7 +18,88 @@ func newFindingCmd() *cobra.Command {
 		Short:   "Manage findings (evidence-backed observations)",
 	}
 	root.AddCommand(newFindingAddCmd())
+	root.AddCommand(newFindingCloseCmd())
 	return root
+}
+
+func newFindingCloseCmd() *cobra.Command {
+	var (
+		rulingID string
+		note     string
+	)
+	cmd := &cobra.Command{
+		Use:   "close <finding-id> --ruling <id> [--note <why>]",
+		Short: "Close a finding citing the ruling that settled it (actor-gated: BD_ACTOR=executor is refused)",
+		Long: `Close a finding a ruling has settled. Its status becomes answered, answered_by
+names the ruling, and closed_by records who closed it; filed_by and evidence
+are untouched. A closed finding drops out of the FINDINGS block and out of
+active listings, and stays readable via bd get and
+bd statements list --status answered.
+
+--ruling is required and must name an existing ruling. --note is optional and
+records why, in words.
+
+Refused for a finding that is already closed.
+
+Actor gating: BD_ACTOR=executor cannot close findings; an executor files a finding or question instead. BD_ACTOR=coordinator or unset (owner) is allowed.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			identity, isExecutor := resolveActor()
+			if isExecutor {
+				return executorRefusal(identity)
+			}
+
+			findingID := strings.TrimSpace(args[0])
+			if findingID == "" {
+				return fmt.Errorf("finding id is required")
+			}
+			rid := strings.TrimSpace(rulingID)
+			if rid == "" {
+				return fmt.Errorf("--ruling is required")
+			}
+
+			cc, err := openStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer cc.store.Close()
+
+			f, err := cc.store.GetStatement(cc.ctx, findingID)
+			if err != nil {
+				return fmt.Errorf("finding %s not found: %w", findingID, err)
+			}
+			if f.Kind != "finding" {
+				return fmt.Errorf("statement %s is not a finding (is %s)", findingID, f.Kind)
+			}
+			if f.Status != "active" {
+				return fmt.Errorf("finding %s is not active (is %s); it is already closed", findingID, f.Status)
+			}
+			r, err := cc.store.GetStatement(cc.ctx, rid)
+			if err != nil {
+				return fmt.Errorf("ruling %s not found: %w", rid, err)
+			}
+			if r.Kind != "ruling" {
+				return fmt.Errorf("statement %s is not a ruling (is %s)", rid, r.Kind)
+			}
+
+			if err := cc.store.CloseFinding(cc.ctx, findingID, rid, identity, strings.TrimSpace(note)); err != nil {
+				return err
+			}
+
+			updated, err := cc.store.GetStatement(cc.ctx, findingID)
+			if err != nil {
+				return err
+			}
+			if cc.json {
+				return writeJSONTo(cmd.OutOrStdout(), updated)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), updated.ID)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&rulingID, "ruling", "", "ruling id that settled the finding (required)")
+	cmd.Flags().StringVar(&note, "note", "", "why the ruling settles it, in words (optional)")
+	return cmd
 }
 
 func newFindingAddCmd() *cobra.Command {

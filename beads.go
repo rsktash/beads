@@ -209,6 +209,9 @@ type Statement struct {
 	ToolUseID  string     `db:"tool_use_id" json:"tool_use_id,omitempty"`
 	RetireNote string     `db:"retire_note" json:"retire_note,omitempty"`
 	ChangedAt  *time.Time `db:"changed_at" json:"changed_at,omitempty"`
+	// ClosedBy is the actor identity that closed the statement (bd finding
+	// close); FiledBy stays the filer.
+	ClosedBy string `db:"closed_by" json:"closed_by,omitempty"`
 }
 
 type Comment struct {
