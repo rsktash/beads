@@ -1,7 +1,7 @@
 # Multi-stage build for @rsktash/bd-web. Stage 1 builds the React bundle;
 # stage 2 keeps only the Node runtime + server + built dist + node_modules.
 
-FROM node:20-bookworm-slim AS build
+FROM node:24.22.1-bookworm-slim AS build
 WORKDIR /app
 
 # Install deps first for layer caching. better-sqlite3 needs build tools.
@@ -18,7 +18,7 @@ COPY bin ./bin
 RUN npm run build
 
 # ---- runtime ----
-FROM node:20-bookworm-slim AS runtime
+FROM node:24.22.1-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
