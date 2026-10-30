@@ -11,24 +11,34 @@ import (
 	"github.com/rsktash/beads/store"
 )
 
-// newAgentsRepo makes a git repository in the working directory with two
-// commits: one that changes a nested AGENTS.md and one that does not.
+// newAgentsRepo makes a git repository and moves the working directory into
+// it. Its two commits: the root one changes a nested AGENTS.md, the next does
+// not.
 func newAgentsRepo(t *testing.T) (agentsSHA, otherSHA string) {
 	t.Helper()
-	root := t.TempDir()
+	root, agentsSHA, otherSHA := newAgentsRepoAt(t)
 	t.Chdir(root)
+	return agentsSHA, otherSHA
+}
+
+func writeRepoFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func newAgentsRepoAt(t *testing.T) (root, agentsSHA, otherSHA string) {
+	t.Helper()
+	root = t.TempDir()
 	mustGit(t, root, "init")
 	mustGit(t, root, "config", "user.email", "close@example.test")
 	mustGit(t, root, "config", "user.name", "Close Test")
-	write := func(rel, content string) {
-		path := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
+	write := func(rel, content string) { writeRepoFile(t, root, rel, content) }
 	write("server/AGENTS.md", "# server\n- the answer\n")
 	mustGit(t, root, "add", ".")
 	mustGit(t, root, "commit", "-m", "rule into AGENTS.md")
@@ -37,7 +47,7 @@ func newAgentsRepo(t *testing.T) (agentsSHA, otherSHA string) {
 	mustGit(t, root, "add", ".")
 	mustGit(t, root, "commit", "-m", "code only")
 	otherSHA = mustGit(t, root, "rev-parse", "HEAD")
-	return agentsSHA, otherSHA
+	return root, agentsSHA, otherSHA
 }
 
 func TestQuestionClose_CommitAnswers(t *testing.T) {
@@ -91,8 +101,10 @@ func TestQuestionClose_CommitRefusals(t *testing.T) {
 		{"no AGENTS.md in the commit", "", []string{"--commit", otherSHA}, "changes no AGENTS.md"},
 		{"unknown commit", "", []string{"--commit", "deadbeefdeadbeef"}, "is not a commit"},
 		{"option-shaped commit", "", []string{"--commit=--all"}, "is not a commit"},
-		{"with --reason", "", []string{"--commit", agentsSHA, "--reason", "moot", "--note", "n"}, "takes no --reason or --of"},
-		{"with --of", "", []string{"--commit", agentsSHA, "--of", "Q-1"}, "takes no --reason or --of"},
+		{"with --reason", "", []string{"--commit", agentsSHA, "--reason", "moot"}, "takes no --reason, --of or --note"},
+		{"with --of", "", []string{"--commit", agentsSHA, "--of", "Q-1"}, "takes no --reason, --of or --note"},
+		{"with --note", "", []string{"--commit", agentsSHA, "--note", "n"}, "takes no --reason, --of or --note"},
+		{"--repo without --commit", "", []string{"--reason", "moot", "--note", "n", "--repo", "."}, "--repo is only for --commit"},
 		{"executor", "executor", []string{"--commit", agentsSHA}, "BD_ACTOR=executor"},
 		{"neither --commit nor --reason", "", []string{"--note", "n"}, "--reason is required"},
 	} {
@@ -114,5 +126,68 @@ func TestQuestionClose_CommitRefusals(t *testing.T) {
 				t.Fatalf("a refused close wrote: status %s commit %q", got.Status, got.AnsweredCommit)
 			}
 		})
+	}
+}
+
+// TestQuestionClose_CommitInNamedRepo: bd runs from an outer folder while the
+// AGENTS.md commit lives in a nested repository; --repo points git there.
+func TestQuestionClose_CommitInNamedRepo(t *testing.T) {
+	repo, agentsSHA, _ := newAgentsRepoAt(t)
+	t.Chdir(t.TempDir())
+	dsn, st := newTempQFStore(t, "bd")
+	issue := mkQFIssue(t, st, "nested repo")
+	qID := mkQuestion(t, st, issue.ID, "q")
+	_ = st.Close()
+	asOwner(t)
+
+	_, _, err := runQuestionCmd(t, []string{"close", qID, "--commit", agentsSHA})
+	if err == nil || !strings.Contains(err.Error(), "not a commit in the current repository") {
+		t.Fatalf("without --repo the sha is looked up in the working directory, got %v", err)
+	}
+	if _, _, err := runQuestionCmd(t, []string{"close", qID, "--commit", agentsSHA, "--repo", repo}); err != nil {
+		t.Fatalf("close --commit --repo: %v", err)
+	}
+	if got := getStatementQF(t, dsn, qID); got.Status != "answered" || got.AnsweredCommit != agentsSHA {
+		t.Fatalf("got status %s commit %q, want answered %s", got.Status, got.AnsweredCommit, agentsSHA)
+	}
+}
+
+// TestQuestionClose_MergeCommitJudgedByFirstParent: a merge that brought an
+// AGENTS.md change in closes the question; a merge that brought only code
+// does not.
+func TestQuestionClose_MergeCommitJudgedByFirstParent(t *testing.T) {
+	repo, _, _ := newAgentsRepoAt(t)
+	main := mustGit(t, repo, "rev-parse", "--abbrev-ref", "HEAD")
+	merge := func(branch, rel string) string {
+		mustGit(t, repo, "checkout", "-q", "-b", branch)
+		writeRepoFile(t, repo, rel, branch+"\n")
+		mustGit(t, repo, "add", ".")
+		mustGit(t, repo, "commit", "-q", "-m", branch)
+		mustGit(t, repo, "checkout", "-q", main)
+		writeRepoFile(t, repo, "main-"+branch+".txt", "main side\n")
+		mustGit(t, repo, "add", ".")
+		mustGit(t, repo, "commit", "-q", "-m", "main moves on")
+		mustGit(t, repo, "merge", "-q", "--no-ff", "--no-edit", branch)
+		return mustGit(t, repo, "rev-parse", "HEAD")
+	}
+	agentsMerge := merge("rule", "client/AGENTS.md")
+	codeMerge := merge("code", "client/main.go")
+
+	dsn, st := newTempQFStore(t, "bd")
+	issue := mkQFIssue(t, st, "merge close")
+	q1 := mkQuestion(t, st, issue.ID, "q1")
+	q2 := mkQuestion(t, st, issue.ID, "q2")
+	_ = st.Close()
+	asOwner(t)
+
+	if _, _, err := runQuestionCmd(t, []string{"close", q1, "--commit", agentsMerge, "--repo", repo}); err != nil {
+		t.Fatalf("a merge bringing an AGENTS.md change must close: %v", err)
+	}
+	if got := getStatementQF(t, dsn, q1); got.AnsweredCommit != agentsMerge {
+		t.Fatalf("answered_commit = %q, want %q", got.AnsweredCommit, agentsMerge)
+	}
+	_, _, err := runQuestionCmd(t, []string{"close", q2, "--commit", codeMerge, "--repo", repo})
+	if err == nil || !strings.Contains(err.Error(), "changes no AGENTS.md") {
+		t.Fatalf("a merge bringing only code must be refused, got %v", err)
 	}
 }

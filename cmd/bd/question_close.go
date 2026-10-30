@@ -53,9 +53,10 @@ func newQuestionCloseCmd() *cobra.Command {
 		note   string
 		of     string
 		commit string
+		repo   string
 	)
 	cmd := &cobra.Command{
-		Use:   "close <question-id> --reason <code> --note <why> | --commit <sha>",
+		Use:   "close <question-id> --reason <code> --note <why> | --commit <sha> [--repo <path>]",
 		Short: "Close a question without minting a ruling (actor-gated: BD_ACTOR=executor is refused)",
 		Long: `Close a question that stopped being an execution blocker, without filing a ruling.
 
@@ -68,8 +69,11 @@ Reasons:
 
 --commit <sha> closes a question the owner answered: the sha names the commit that
 wrote the answer into an AGENTS.md. It takes no --reason or --of; the status becomes
-answered and the sha is stored in its own column. The commit must exist in the
-current repository and change at least one AGENTS.md.
+answered and the sha is stored in its own column. It takes no --note either: the
+commit is the record. The commit must exist in the repository and change at
+least one AGENTS.md; a merge commit is judged by what it changed against its
+first parent. --repo names that repository when it is not the working
+directory (a nested repository, say); it defaults to the working directory.
 
 The --of link is written to the closed question's answered_by column, so the
 closed question points at the question that took its place. The named question
@@ -92,10 +96,13 @@ Actor gating: BD_ACTOR=executor cannot close questions; use a finding or questio
 			}
 			commitVal := strings.TrimSpace(commit)
 			if commitVal != "" {
-				if strings.TrimSpace(reason) != "" || strings.TrimSpace(of) != "" {
-					return fmt.Errorf("--commit takes no --reason or --of")
+				if strings.TrimSpace(reason) != "" || strings.TrimSpace(of) != "" || strings.TrimSpace(note) != "" {
+					return fmt.Errorf("--commit takes no --reason, --of or --note: the commit is the record")
 				}
-				return closeQuestionWithCommit(cmd, questionID, commitVal)
+				return closeQuestionWithCommit(cmd, questionID, commitVal, strings.TrimSpace(repo))
+			}
+			if strings.TrimSpace(repo) != "" {
+				return fmt.Errorf("--repo is only for --commit")
 			}
 			reasonVal := strings.TrimSpace(reason)
 			if reasonVal == "" {
@@ -164,13 +171,14 @@ Actor gating: BD_ACTOR=executor cannot close questions; use a finding or questio
 	cmd.Flags().StringVar(&reason, "reason", "", "why it stopped blocking: moot|duplicate|superseded (required without --commit)")
 	cmd.Flags().StringVar(&note, "note", "", "the record of why, in words (required without --commit)")
 	cmd.Flags().StringVar(&of, "of", "", "the surviving (duplicate) or replacing (superseded) question id")
-	cmd.Flags().StringVar(&commit, "commit", "", "the AGENTS.md commit that answers the question (exclusive with --reason)")
+	cmd.Flags().StringVar(&commit, "commit", "", "the AGENTS.md commit that answers the question (exclusive with --reason, --of, --note)")
+	cmd.Flags().StringVar(&repo, "repo", "", "the git repository holding --commit (default: the working directory)")
 	return cmd
 }
 
 // closeQuestionWithCommit closes an active question as answered by the named
 // commit, which must exist in the current repository and touch an AGENTS.md.
-func closeQuestionWithCommit(cmd *cobra.Command, questionID, commit string) error {
+func closeQuestionWithCommit(cmd *cobra.Command, questionID, commit, repo string) error {
 	cc, err := openStore(cmd)
 	if err != nil {
 		return err
@@ -188,7 +196,7 @@ func closeQuestionWithCommit(cmd *cobra.Command, questionID, commit string) erro
 		return fmt.Errorf("question %s is not active (is %s); it is already closed", questionID, q.Status)
 	}
 
-	sha, err := verifyAgentsCommit(cc.ctx, commit)
+	sha, err := verifyAgentsCommit(cc.ctx, repo, commit)
 	if err != nil {
 		return err
 	}
@@ -207,20 +215,27 @@ func closeQuestionWithCommit(cmd *cobra.Command, questionID, commit string) erro
 	return nil
 }
 
-// verifyAgentsCommit resolves commit to its full sha in the current repository
-// and checks that it changes at least one AGENTS.md.
-func verifyAgentsCommit(ctx context.Context, commit string) (string, error) {
+// verifyAgentsCommit resolves commit to its full sha in repo (the working
+// directory when empty) and checks that it changes at least one AGENTS.md. A
+// merge is judged against its first parent: that is what it brought in.
+func verifyAgentsCommit(ctx context.Context, repo, commit string) (string, error) {
+	where := "the current repository"
+	gitArgs := func(args ...string) []string { return args }
+	if repo != "" {
+		where = "repository " + repo
+		gitArgs = func(args ...string) []string { return append([]string{"-C", repo}, args...) }
+	}
 	if strings.HasPrefix(commit, "-") {
 		return "", fmt.Errorf("--commit %q is not a commit", commit)
 	}
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", commit+"^{commit}").Output()
+	out, err := exec.CommandContext(ctx, "git", gitArgs("rev-parse", "--verify", "--quiet", commit+"^{commit}")...).Output()
 	if err != nil {
-		return "", fmt.Errorf("--commit %s is not a commit in the current repository", commit)
+		return "", fmt.Errorf("--commit %s is not a commit in %s", commit, where)
 	}
 	sha := strings.TrimSpace(string(out))
-	files, err := exec.CommandContext(ctx, "git", "show", "--name-only", "--format=", sha).Output()
+	files, err := exec.CommandContext(ctx, "git", gitArgs("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-m", "--first-parent", sha)...).Output()
 	if err != nil {
-		return "", fmt.Errorf("git show %s: %w", sha, err)
+		return "", fmt.Errorf("git diff-tree %s in %s: %w", sha, where, err)
 	}
 	for _, f := range strings.Split(string(files), "\n") {
 		if path.Base(strings.TrimSpace(f)) == "AGENTS.md" {
