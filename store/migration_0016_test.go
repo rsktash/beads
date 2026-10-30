@@ -53,6 +53,20 @@ func TestMigration0016_SQLiteKeepsHandoffs(t *testing.T) {
 	if n := count(); n != 2 {
 		t.Fatalf("plan_handoff rows after 0016 = %d, want 2", n)
 	}
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatalf("foreign_key_check: %v", err)
+	}
+	var violations int
+	for rows.Next() {
+		violations++
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("foreign_key_check rows: %v", err)
+	}
+	if violations != 0 {
+		t.Fatalf("foreign_key_check after 0016 reports %d violations, want 0", violations)
+	}
 	var mode string
 	if err := db.QueryRowContext(ctx, `SELECT mode FROM plan_lane WHERE plan_id = 'p1' AND lane = 'A'`).Scan(&mode); err != nil {
 		t.Fatalf("read lane: %v", err)

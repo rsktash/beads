@@ -19,5 +19,4 @@ INSERT INTO plan_lane_new (plan_id, lane, queue, cursor, mode, rulings, holder, 
 DROP TABLE plan_lane;
 ALTER TABLE plan_lane_new RENAME TO plan_lane;
 COMMIT;
-PRAGMA foreign_key_check;
 PRAGMA foreign_keys=ON;
