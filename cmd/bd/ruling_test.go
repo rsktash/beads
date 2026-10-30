@@ -200,3 +200,44 @@ func TestRuling_AddRefusedForEveryActor(t *testing.T) {
 		}
 	}
 }
+
+// TestRuling_ParkShowRendersLegacyRulings: a parked bead (deferred far future,
+// label 'parked') still renders the rulings filed on it.
+func TestRuling_ParkShowRendersLegacyRulings(t *testing.T) {
+	_, st := newTempRulingStore(t, "bd")
+	issue := mkIssueForRuling(t, st, "park show")
+	ctx := context.Background()
+	park := store.ParkDeferUntil
+	r := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "park show ruling", FiledBy: "owner:tester"}
+	if err := st.FileRuling(ctx, r, &store.IssueUpdate{DeferUntil: &park, AddLabels: []string{"parked"}}); err != nil {
+		t.Fatalf("seed parked ruling: %v", err)
+	}
+	got, err := st.GetIssue(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("get issue: %v", err)
+	}
+	if got.DeferUntil == nil || !got.DeferUntil.Equal(park) {
+		t.Fatalf("bead should be parked, defer_until = %v", got.DeferUntil)
+	}
+
+	cv, err := st.ContractStatements(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("contract: %v", err)
+	}
+	found := false
+	for _, cr := range cv.Rulings {
+		if strings.Contains(cr.Text, "park show ruling") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("parked ruling not in contract view: %+v", cv.Rulings)
+	}
+	out := renderContractOutput(t, st, issue.ID, showOpts{})
+	if !strings.Contains(out, "LEGACY RULINGS — BIND ONLY WHERE NO AGENTS.md COVERS THE CODE") {
+		t.Fatalf("show should render LEGACY RULINGS for parked bead, got:\n%s", out)
+	}
+	if !strings.Contains(out, "park show ruling") {
+		t.Fatalf("show should contain ruling text, got:\n%s", out)
+	}
+}
