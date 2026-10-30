@@ -14,7 +14,8 @@ func newStatementsPromoteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "promote <statement-id>",
 		Short: "Promote a candidate statement to active (actor-gated: BD_ACTOR=executor is refused)",
-		Long: `Promote a backfilled candidate statement to active.
+		Long: `Promote a candidate statement to active. A ruling candidate is refused for
+every actor: rulings are legacy.
 
 Actor gating: BD_ACTOR=executor cannot promote candidates; promotion is the
 owner's confirmation. BD_ACTOR=coordinator or unset (owner) is allowed.
@@ -53,6 +54,9 @@ bd rulings and the contract.`,
 					return fmt.Errorf("statement %s not found", id)
 				}
 				return err
+			}
+			if st.Kind == "ruling" {
+				return errRulingsClosed
 			}
 			if st.Status != "candidate" {
 				return fmt.Errorf("statement %s is %s, not candidate; only candidates can be promoted", id, st.Status)

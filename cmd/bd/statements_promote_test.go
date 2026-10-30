@@ -29,15 +29,20 @@ func runStatementsViaRoot(t *testing.T, args []string) (string, string, error) {
 	return bufOut.String(), bufErr.String(), err
 }
 
-// mkCandidate creates a candidate ruling linked to an issue and a real source
-// comment, then returns it.
+// mkCandidate creates a candidate finding linked to an issue and a real
+// source comment, then returns it. A ruling candidate is refused at promote.
 func mkCandidate(t *testing.T, st *store.Store, issueID, text string) *beads.Statement {
+	t.Helper()
+	return mkCandidateKind(t, st, issueID, "finding", text)
+}
+
+func mkCandidateKind(t *testing.T, st *store.Store, issueID, kind, text string) *beads.Statement {
 	t.Helper()
 	c := addBackfillComment(t, st, issueID, text)
 	iid := issueID
 	src := c.ID
 	stmt := &beads.Statement{
-		Kind:            "ruling",
+		Kind:            kind,
 		IssueID:         &iid,
 		Text:            text,
 		FiledBy:         "owner:tester",
@@ -185,28 +190,25 @@ func TestPromote_JSON(t *testing.T) {
 	}
 }
 
-// After promotion the ruling appears in bd rulings (active list).
-func TestPromote_AppearsInRulings(t *testing.T) {
-	_, st := newTempBackfillStore(t, "bd")
-	iss := mkBackfillIssue(t, st, "promote rulings")
-	cand := mkCandidate(t, st, iss.ID, "OWNER RULING becomes active")
-	_ = st.Close()
-
-	if _, _, err := runStatementsViaRoot(t, []string{"promote", cand.ID}); err != nil {
-		t.Fatalf("promote: %v", err)
-	}
-
-	// List active rulings via the rulings command (project-wide).
-	savedDB := flagDB
-	root := newRoot()
-	flagDB = savedDB
-	buf := &bytes.Buffer{}
-	root.SetOut(buf)
-	root.SetArgs([]string{"rulings"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("rulings: %v", err)
-	}
-	if !strings.Contains(buf.String(), cand.ID) {
-		t.Fatalf("promoted ruling %s should appear in bd rulings, got %q", cand.ID, buf.String())
+// A ruling candidate is refused for every actor: promoting it would mint a
+// new active ruling.
+func TestPromote_RulingCandidateRefused(t *testing.T) {
+	for _, actor := range []string{"", "coordinator"} {
+		t.Run("actor="+actor, func(t *testing.T) {
+			dsn, st := newTempBackfillStore(t, "bd")
+			iss := mkBackfillIssue(t, st, "promote ruling")
+			cand := mkCandidateKind(t, st, iss.ID, "ruling", "OWNER RULING stays a candidate")
+			_ = st.Close()
+			if actor != "" {
+				t.Setenv("BD_ACTOR", actor)
+			}
+			_, _, err := runStatementsViaRoot(t, []string{"promote", cand.ID})
+			if err != errRulingsClosed {
+				t.Fatalf("promote of a ruling = %v, want errRulingsClosed", err)
+			}
+			if got := getStatement(t, dsn, cand.ID); got.Status != "candidate" {
+				t.Fatalf("status must stay candidate, got %q", got.Status)
+			}
+		})
 	}
 }

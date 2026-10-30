@@ -94,8 +94,8 @@ decided closes with bd question close --commit <sha>.
 --finding names a finding: evidence settled it, and no ruling is minted. Use this
 when nobody decided anything and the answer is what the evidence already says.
 
-The two flags are mutually exclusive, and each is checked against the kind it
-names, so an evidence-settled question stays distinguishable from a ruled one.
+The --finding id is checked against its kind, so an evidence-settled question
+stays distinguishable from a ruled one.
 
 Actor gating: BD_ACTOR=executor cannot answer questions; an executor files the finding and leaves the question open. BD_ACTOR=coordinator or unset (owner) is allowed.`,
 		Args: cobra.ExactArgs(1),
@@ -112,17 +112,9 @@ Actor gating: BD_ACTOR=executor cannot answer questions; an executor files the f
 			if questionID == "" {
 				return fmt.Errorf("question id is required")
 			}
-			rid := strings.TrimSpace(rulingID)
-			fid := strings.TrimSpace(findingID)
-			if rid != "" && fid != "" {
-				return fmt.Errorf("--ruling and --finding are mutually exclusive")
-			}
-			// answerID is the statement that settles the question; answerKind is the
-			// kind the caller's flag claims it is, and the row must match it.
-			answerID, answerKind := rid, "ruling"
-			if fid != "" {
-				answerID, answerKind = fid, "finding"
-			}
+			// answerID is the finding that settles the question; the row must
+			// be a finding.
+			answerID, answerKind := strings.TrimSpace(findingID), "finding"
 			if answerID == "" {
 				return fmt.Errorf("--finding is required")
 			}
@@ -173,6 +165,6 @@ Actor gating: BD_ACTOR=executor cannot answer questions; an executor files the f
 		},
 	}
 	cmd.Flags().StringVar(&rulingID, "ruling", "", "refused: rulings are legacy")
-	cmd.Flags().StringVar(&findingID, "finding", "", "finding id whose evidence answers the question (exclusive with --ruling)")
+	cmd.Flags().StringVar(&findingID, "finding", "", "finding id whose evidence answers the question")
 	return cmd
 }

@@ -250,63 +250,28 @@ func TestDoctrine_LawlessProjectRulingUnchanged(t *testing.T) {
 	}
 }
 
-// --- Behaviour 10: promote re-scopes in place ---
+// --- promote is refused: it would widen a ruling into project law ---
 
-func TestDoctrine_PromoteRescopesInPlace(t *testing.T) {
-	st := newTempDoctrineStore(t)
-	bead := mkDoctrineIssue(t, st, "a bead")
-	id := mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", IssueID: strPtr2(bead.ID), Text: "a ruling that outgrew its bead", Topic: "admin-authority", FiledBy: "owner:tester"}).ID
-	before := countAllStatements(t, st)
-
-	if _, errOut, err := runDoctrine(t, "doctrine", "promote", id, "--concern", "authority"); err != nil {
-		t.Fatalf("promote failed: %v (stderr %q)", err, errOut)
-	}
-
-	if after := countAllStatements(t, st); after != before {
-		t.Fatalf("promote must not mint a ruling: %d rows before, %d after", before, after)
-	}
-	row, err := st.GetStatement(context.Background(), id)
-	if err != nil {
-		t.Fatalf("get %s: %v", id, err)
-	}
-	if row.IssueID != nil {
-		t.Fatalf("promote must set issue_id NULL, got %v", *row.IssueID)
-	}
-	if row.Concern != "authority" {
-		t.Fatalf("promote must stamp the concern, got %q", row.Concern)
-	}
-	if row.Text != "a ruling that outgrew its bead" {
-		t.Fatalf("promote must not rewrite the ruling, got %q", row.Text)
-	}
-
-	listOut, _, err := runDoctrine(t, "doctrine", "list")
-	if err != nil {
-		t.Fatalf("doctrine list failed: %v", err)
-	}
-	if !strings.Contains(listOut, id) {
-		t.Fatalf("the promoted ruling must be doctrine now, got\n%s", listOut)
-	}
-}
-
-func TestDoctrine_PromoteRefusesExecutor(t *testing.T) {
-	st := newTempDoctrineStore(t)
-	bead := mkDoctrineIssue(t, st, "a bead")
-	id := mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", IssueID: strPtr2(bead.ID), Text: "a ruling that outgrew its bead", Topic: "admin-authority", FiledBy: "owner:tester"}).ID
-
-	t.Setenv("BD_ACTOR", "executor")
-	_, _, err := runDoctrine(t, "doctrine", "promote", id, "--concern", "authority")
-	if err == nil {
-		t.Fatalf("an executor must not promote a ruling to doctrine")
-	}
-	if !strings.Contains(err.Error(), "BD_ACTOR=executor") {
-		t.Fatalf("the refusal must name the actor, got %q", err)
-	}
-
-	row, err := st.GetStatement(context.Background(), id)
-	if err != nil {
-		t.Fatalf("get %s: %v", id, err)
-	}
-	if row.IssueID == nil || *row.IssueID != bead.ID {
-		t.Fatalf("a refused promote must not move the ruling")
+func TestDoctrine_PromoteRefusedForEveryActor(t *testing.T) {
+	for _, actor := range []string{"", "coordinator", "executor"} {
+		t.Run("actor="+actor, func(t *testing.T) {
+			st := newTempDoctrineStore(t)
+			bead := mkDoctrineIssue(t, st, "a bead")
+			id := mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", IssueID: strPtr2(bead.ID), Text: "a ruling that outgrew its bead", Topic: "admin-authority", FiledBy: "owner:tester"}).ID
+			if actor != "" {
+				t.Setenv("BD_ACTOR", actor)
+			}
+			_, _, err := runDoctrine(t, "doctrine", "promote", id, "--concern", "authority")
+			if err != errRulingsClosed {
+				t.Fatalf("doctrine promote = %v, want errRulingsClosed", err)
+			}
+			row, err := st.GetStatement(context.Background(), id)
+			if err != nil {
+				t.Fatalf("get %s: %v", id, err)
+			}
+			if row.IssueID == nil || *row.IssueID != bead.ID || row.Concern != "" {
+				t.Fatalf("a refused promote changed the ruling: issue %v concern %q", row.IssueID, row.Concern)
+			}
+		})
 	}
 }

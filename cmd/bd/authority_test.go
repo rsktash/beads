@@ -149,7 +149,7 @@ func TestAuthority_SectionOrder(t *testing.T) {
 	out, errOut, err := runAuthority(t, "authority", bead.ID)
 	requireNoErr(t, err, errOut)
 
-	want := []string{"BRIEF", "LEGACY RULINGS", "TOPIC", "QUESTIONS", "FINDINGS", "DOCTRINE", "RELATED"}
+	want := []string{"BRIEF", "LEGACY RULINGS", "TOPIC", "QUESTIONS", "FINDINGS", "LEGACY DOCTRINE", "RELATED"}
 	at := -1
 	for _, label := range want {
 		idx := strings.Index(out, "\n"+label+" ")
@@ -344,7 +344,7 @@ func TestAuthority_DoctrineOutsideAreasIsACount(t *testing.T) {
 	out, errOut, err := runAuthority(t, "authority", bead.ID)
 	requireNoErr(t, err, errOut)
 
-	lines := briefSection(out, "DOCTRINE")
+	lines := briefSection(out, "LEGACY DOCTRINE")
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "Admin permissions are a platform business row.") {
 		t.Fatalf("the in-area law is missing or is not rendered from its law column:\n%s", joined)
@@ -370,7 +370,7 @@ func TestAuthority_DoctrineFallsBackToTheRulingHeadline(t *testing.T) {
 
 	out, errOut, err := runAuthority(t, "authority", bead.ID)
 	requireNoErr(t, err, errOut)
-	if !strings.Contains(strings.Join(briefSection(out, "DOCTRINE"), "\n"), "a law with no law column") {
+	if !strings.Contains(strings.Join(briefSection(out, "LEGACY DOCTRINE"), "\n"), "a law with no law column") {
 		t.Fatalf("an empty law column did not fall back to the ruling headline:\n%s", out)
 	}
 }

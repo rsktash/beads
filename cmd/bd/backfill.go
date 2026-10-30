@@ -44,8 +44,10 @@ func newStatementsBackfillCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "backfill",
-		Short: "Backfill candidate rulings from legacy comment markers",
-		Long: `Scan every comment for legacy markers and file candidate rulings.
+		Short: "Preview legacy comment markers (--dry-run only: rulings are legacy)",
+		Long: `Scan every comment for legacy markers and preview the candidate rulings they
+would have produced. Rulings are legacy, so only --dry-run runs; without it the
+command is refused for every actor and writes nothing.
 
 Markers (one candidate per matching comment, even if multiple markers match):
 
@@ -56,14 +58,14 @@ Markers (one candidate per matching comment, even if multiple markers match):
 A leading [coordinator] tag is a reader filter, not an authority marker, and
 does not mint a candidate on its own.
 
-Each emitted row has kind "ruling" and status "candidate", linked to the
-source comment via source_comment_id. The command never promotes candidates
-to active and never modifies source comments.
-
-Idempotent: a comment that already has a candidate linked via source_comment_id
-is skipped. --dry-run prints what would be emitted and writes nothing.`,
+Each previewed row has kind "ruling" and status "candidate", linked to the
+source comment via source_comment_id. A comment that already has a candidate
+linked via source_comment_id is skipped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !dryRun {
+				return errRulingsClosed
+			}
 			cc, err := openStore(cmd)
 			if err != nil {
 				return err
@@ -122,73 +124,38 @@ is skipped. --dry-run prints what would be emitted and writes nothing.`,
 			// Determine JSON output flag via cc.json (derived from global flagJSON) and global fallback.
 			isJSON := cc.json || flagJSON
 
-			if dryRun {
-				if isJSON {
-					// Emit preview array without persisting.
-					var preview []beads.Statement
-					for _, c := range toCreate {
-						// Need copy for pointer
-						issueIDCopy := c.IssueID
-						var iidPtr *string
-						if issueIDCopy != "" {
-							v := issueIDCopy
-							iidPtr = &v
-						}
-						srcCopy := c.ID
-						preview = append(preview, beads.Statement{
-							Kind:            "ruling",
-							IssueID:         iidPtr,
-							Text:            c.Text,
-							FiledBy:         filedBy,
-							Status:          "candidate",
-							Scope:           "inherit",
-							SourceCommentID: &srcCopy,
-						})
-					}
-					if preview == nil {
-						preview = []beads.Statement{}
-					}
-					return writeJSONTo(cmd.OutOrStdout(), preview)
-				}
-				// Count on stdout, plus what would be emitted.
-				fmt.Fprintf(cmd.OutOrStdout(), "would create %d candidates\n", len(toCreate))
-				for _, c := range toCreate {
-					fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", c.ID, c.IssueID, c.Text)
-				}
-				return nil
-			}
-
-			var created []beads.Statement
-			for _, c := range toCreate {
-				issueIDCopy := c.IssueID
-				var iidPtr *string
-				if issueIDCopy != "" {
-					v := issueIDCopy
-					iidPtr = &v
-				}
-				srcCopy := c.ID
-				st := &beads.Statement{
-					Kind:            "ruling",
-					IssueID:         iidPtr,
-					Text:            c.Text,
-					FiledBy:         filedBy,
-					Status:          "candidate",
-					Scope:           "inherit",
-					SourceCommentID: &srcCopy,
-				}
-				if err := cc.store.CreateStatement(cc.ctx, st); err != nil {
-					return err
-				}
-				created = append(created, *st)
-			}
-
 			if isJSON {
-				if created == nil {
-					created = []beads.Statement{}
+				// Emit preview array without persisting.
+				var preview []beads.Statement
+				for _, c := range toCreate {
+					// Need copy for pointer
+					issueIDCopy := c.IssueID
+					var iidPtr *string
+					if issueIDCopy != "" {
+						v := issueIDCopy
+						iidPtr = &v
+					}
+					srcCopy := c.ID
+					preview = append(preview, beads.Statement{
+						Kind:            "ruling",
+						IssueID:         iidPtr,
+						Text:            c.Text,
+						FiledBy:         filedBy,
+						Status:          "candidate",
+						Scope:           "inherit",
+						SourceCommentID: &srcCopy,
+					})
 				}
-				return writeJSONTo(cmd.OutOrStdout(), created)
+				if preview == nil {
+					preview = []beads.Statement{}
+				}
+				return writeJSONTo(cmd.OutOrStdout(), preview)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "backfilled %d candidates\n", len(created))
+			// Count on stdout, plus what would be emitted.
+			fmt.Fprintf(cmd.OutOrStdout(), "would create %d candidates\n", len(toCreate))
+			for _, c := range toCreate {
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", c.ID, c.IssueID, c.Text)
+			}
 			return nil
 		},
 	}

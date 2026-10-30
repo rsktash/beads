@@ -97,17 +97,15 @@ func backfillCountStatements(t *testing.T, dsn string) int {
 	return len(list)
 }
 
-func backfillListStatements(t *testing.T, dsn string) []beads.Statement {
+// backfillPreviewArgs runs backfill the only way it still runs: a dry-run
+// preview, as JSON so each test reads the rows it would have produced.
+var backfillPreviewArgs = []string{"--dry-run", "--json"}
+
+func backfillPreview(t *testing.T, out string) []beads.Statement {
 	t.Helper()
-	ctx := context.Background()
-	st, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open list: %v", err)
-	}
-	defer st.Close()
-	list, err := st.ListStatements(ctx, store.StatementFilter{})
-	if err != nil {
-		t.Fatalf("list: %v", err)
+	var list []beads.Statement
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("backfill preview json: %v out %q", err, out)
 	}
 	return list
 }
@@ -126,7 +124,7 @@ func addBackfillComment(t *testing.T, st *store.Store, issueID, text string) *be
 // TestBackfill_ShoutedMarkers ensures each shouted authority marker yields a
 // candidate (one per comment), while a coordinator-only comment mints nothing.
 func TestBackfill_ShoutedMarkers(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	// Three shouted-marker beads, plus one coordinator-only bead that must not mint.
 	i1 := mkBackfillIssue(t, st, "owner ruling bead")
 	c1 := addBackfillComment(t, st, i1.ID, "OWNER RULING: we decided X")
@@ -139,17 +137,14 @@ func TestBackfill_ShoutedMarkers(t *testing.T) {
 
 	_ = st.Close()
 
-	out, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
-		t.Fatalf("backfill: %v out %q", err, out)
+		t.Fatalf("backfill: %v out %q", err, previewOut)
 	}
 	// Expect 3 candidates: coordinator-only comment does not mint.
-	if !strings.Contains(out, "3") {
-		t.Fatalf("expected count 3 in output, got %q", out)
-	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 3 {
-		t.Fatalf("expected exactly 3 candidates, got %d %+v out %q", len(list), list, out)
+		t.Fatalf("expected exactly 3 candidates, got %d %+v out %q", len(list), list, previewOut)
 	}
 	// Each marker has its own assertion: find candidate linked to each comment id.
 	bySrc := map[string]beads.Statement{}
@@ -188,7 +183,7 @@ func TestBackfill_ShoutedMarkers(t *testing.T) {
 
 // Test that every emitted row has kind ruling and status candidate, no active.
 func TestBackfill_KindAndStatus(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	i1 := mkBackfillIssue(t, st, "a")
 	addBackfillComment(t, st, i1.ID, "OWNER RULING test")
 	i2 := mkBackfillIssue(t, st, "b")
@@ -196,11 +191,11 @@ func TestBackfill_KindAndStatus(t *testing.T) {
 	i4 := mkBackfillIssue(t, st, "d")
 	addBackfillComment(t, st, i4.ID, "DEFERRED foo")
 	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 3 {
 		t.Fatalf("expected 3, got %d", len(list))
 	}
@@ -219,7 +214,7 @@ func TestBackfill_KindAndStatus(t *testing.T) {
 
 // Test that every emitted row's source_comment_id equals comment id and issue_id equals that comment's issue.
 func TestBackfill_SourceAndIssueLinkage(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	issues := []*beads.Issue{}
 	comments := []*beads.Comment{}
 	for idx, txt := range []string{"OWNER RULING link", "RULED: link", "DEFERRED link"} {
@@ -229,11 +224,11 @@ func TestBackfill_SourceAndIssueLinkage(t *testing.T) {
 		comments = append(comments, c)
 	}
 	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 3 {
 		t.Fatalf("expected 3, got %d", len(list))
 	}
@@ -265,38 +260,32 @@ func TestBackfill_SourceAndIssueLinkage(t *testing.T) {
 
 // A comment carrying none of the markers yields nothing, and ten unmarked yields zero.
 func TestBackfill_NoMarkerYieldsNothing(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	iss := mkBackfillIssue(t, st, "no marker")
 	addBackfillComment(t, st, iss.ID, "this is just a regular note with no marker")
 	_ = st.Close()
-	out, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	if !strings.Contains(out, "0") {
-		t.Fatalf("expected 0 count in output, got %q", out)
-	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 0 {
 		t.Fatalf("expected zero candidates for unmarked comment, got %d %+v", len(list), list)
 	}
 }
 
 func TestBackfill_TenUnmarkedZero(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	iss := mkBackfillIssue(t, st, "ten unmarked")
 	for i := 0; i < 10; i++ {
 		addBackfillComment(t, st, iss.ID, fmt.Sprintf("unmarked comment %d — nothing special", i))
 	}
 	_ = st.Close()
-	out, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	if !strings.Contains(out, "0") {
-		t.Fatalf("expected 0 count, got %q", out)
-	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 0 {
 		t.Fatalf("fixture of ten unmarked comments yields zero candidates, got %d", len(list))
 	}
@@ -304,31 +293,31 @@ func TestBackfill_TenUnmarkedZero(t *testing.T) {
 
 // Marker matching does not over-reach: exact fixture texts.
 func TestBackfill_Overreach_RulingWasUnclear(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	iss := mkBackfillIssue(t, st, "overreach1")
 	// Exact fixture text per gate: "the ruling was unclear"
 	addBackfillComment(t, st, iss.ID, "the ruling was unclear")
 	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 0 {
 		t.Fatalf("comment %q should produce nothing, got %d candidates %+v", "the ruling was unclear", len(list), list)
 	}
 }
 
 func TestBackfill_Overreach_RuledOut(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	iss := mkBackfillIssue(t, st, "overreach2")
 	addBackfillComment(t, st, iss.ID, "ruled out")
 	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 0 {
 		t.Fatalf("comment %q should produce nothing, got %d candidates %+v", "ruled out", len(list), list)
 	}
@@ -336,17 +325,17 @@ func TestBackfill_Overreach_RuledOut(t *testing.T) {
 
 // Ensure lowercase variants of shouted markers do not match.
 func TestBackfill_Overreach_LowercaseShouted(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	iss := mkBackfillIssue(t, st, "lowercase")
 	addBackfillComment(t, st, iss.ID, "owner ruling")
 	addBackfillComment(t, st, iss.ID, "ruled: lowercase")
 	addBackfillComment(t, st, iss.ID, "deferred lower")
 	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 0 {
 		t.Fatalf("lowercase shouted markers should not match, got %d %+v", len(list), list)
 	}
@@ -354,55 +343,17 @@ func TestBackfill_Overreach_LowercaseShouted(t *testing.T) {
 
 // Comment matching more than one marker still yields exactly one candidate.
 func TestBackfill_MultipleMarkersOneCandidate(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	iss := mkBackfillIssue(t, st, "multi")
 	addBackfillComment(t, st, iss.ID, "OWNER RULING and RULED: and DEFERRED and [coordinator] all in one")
 	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 1 {
 		t.Fatalf("comment matching more than one marker still yields exactly one candidate, got %d", len(list))
-	}
-}
-
-// Running twice produces same candidate set — second run adds no duplicate.
-func TestBackfill_Idempotent(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
-	iss := mkBackfillIssue(t, st, "idempotent")
-	addBackfillComment(t, st, iss.ID, "OWNER RULING idempotent")
-	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
-	if err != nil {
-		t.Fatalf("first backfill: %v", err)
-	}
-	count1 := backfillCountStatements(t, dsn)
-	if count1 != 1 {
-		t.Fatalf("first run expected 1, got %d", count1)
-	}
-	// Second run
-	_, _, err = runBackfillViaRoot(t, []string{})
-	if err != nil {
-		t.Fatalf("second backfill: %v", err)
-	}
-	count2 := backfillCountStatements(t, dsn)
-	if count2 != count1 {
-		t.Fatalf("second run should add no duplicate: first %d second %d", count1, count2)
-	}
-	// Also ensure no duplicate source_comment_id
-	list := backfillListStatements(t, dsn)
-	seen := map[string]int{}
-	for _, s := range list {
-		if s.SourceCommentID != nil {
-			seen[*s.SourceCommentID]++
-		}
-	}
-	for src, c := range seen {
-		if c != 1 {
-			t.Fatalf("duplicate candidate for source %s count %d", src, c)
-		}
 	}
 }
 
@@ -450,70 +401,11 @@ func TestBackfill_DryRun(t *testing.T) {
 	flagJSON = false
 }
 
-// The command reports a count on stdout, and --json emits candidate rows as array.
-func TestBackfill_CountAndJson(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
-	iss := mkBackfillIssue(t, st, "countjson")
-	addBackfillComment(t, st, iss.ID, "OWNER RULING count")
-	_ = st.Close()
-	// Non-json: reports count on stdout
-	out, _, err := runBackfillViaRoot(t, []string{})
-	if err != nil {
-		t.Fatalf("backfill count: %v", err)
-	}
-	if !strings.Contains(out, "1") {
-		t.Fatalf("count on stdout should contain 1, got %q", out)
-	}
-	// --json emits array — need fresh store for json test (since previous run already consumed comment)
-	dsn2, st2 := newTempBackfillStore(t, "bd2")
-	iss2 := mkBackfillIssue(t, st2, "countjson2")
-	addBackfillComment(t, st2, iss2.ID, "DEFERRED json test")
-	_ = st2.Close()
-	// Enable json via flagJSON global (settled_test style)
-	oldJSON := flagJSON
-	flagJSON = true
-	t.Cleanup(func() { flagJSON = oldJSON })
-	outJSON, _, err := runBackfillViaRoot(t, []string{})
-	if err != nil {
-		t.Fatalf("backfill json: %v out %q", err, outJSON)
-	}
-	flagJSON = oldJSON
-	var arr []beads.Statement
-	if err := json.Unmarshal([]byte(outJSON), &arr); err != nil {
-		t.Fatalf("json emit should be array, failed %v out %q", err, outJSON)
-	}
-	if len(arr) != 1 {
-		t.Fatalf("json array length should be 1, got %d out %q", len(arr), outJSON)
-	}
-	if arr[0].Text != "DEFERRED json test" {
-		t.Fatalf("json text mismatch, got %q", arr[0].Text)
-	}
-	// also test via --json arg via direct (ensures flag handling)
-	dsn3, st3 := newTempBackfillStore(t, "bd3")
-	iss3 := mkBackfillIssue(t, st3, "countjson3")
-	addBackfillComment(t, st3, iss3.ID, "RULED: via arg json")
-	_ = st3.Close()
-	outArg, _, err := runBackfillViaRoot(t, []string{"--json"})
-	if err != nil {
-		t.Fatalf("backfill --json arg: %v out %q", err, outArg)
-	}
-	var arr2 []beads.Statement
-	if err := json.Unmarshal([]byte(outArg), &arr2); err != nil {
-		t.Fatalf("arg json unmarshal: %v out %q", err, outArg)
-	}
-	if len(arr2) != 1 {
-		t.Fatalf("arg json length 1 expected, got %d", len(arr2))
-	}
-	_ = dsn
-	_ = dsn2
-	_ = dsn3
-}
-
 // A comment matching only the [coordinator] tag (any case, leading or not) mints
 // no candidate; a coordinator-tagged comment that also carries a shouted marker
 // still mints exactly one.
 func TestBackfill_CoordinatorTagOnlyMintsNothing(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	iss := mkBackfillIssue(t, st, "coordinator only")
 	addBackfillComment(t, st, iss.ID, "[Coordinator] upper C")
 	addBackfillComment(t, st, iss.ID, "[COORDINATOR] all caps")
@@ -522,11 +414,11 @@ func TestBackfill_CoordinatorTagOnlyMintsNothing(t *testing.T) {
 	// A coordinator-tagged comment that also carries a real marker still mints.
 	cMarked := addBackfillComment(t, st, iss.ID, "[coordinator] OWNER RULING keep this")
 	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 1 {
 		t.Fatalf("expected exactly 1 candidate (only the shouted-marker comment), got %d %+v", len(list), list)
 	}
@@ -559,48 +451,6 @@ func TestBackfill_DryRun_CoordinatorOnlyNotCounted(t *testing.T) {
 	}
 }
 
-// Candidate is visible in contract render as proposal and never as active ruling.
-func TestBackfill_CandidateNotActiveInContract(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
-	iss := mkBackfillIssue(t, st, "contract candidate")
-	addBackfillComment(t, st, iss.ID, "OWNER RULING contract test")
-	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
-	if err != nil {
-		t.Fatalf("backfill: %v", err)
-	}
-	// Reopen store for contract rendering (need flagDB still set)
-	ctx := context.Background()
-	st2, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open2: %v", err)
-	}
-	defer st2.Close()
-	// Render via printShowHuman (as contract_test does)
-	cc := &cmdCtx{ctx: ctx, store: st2, json: false}
-	var buf bytes.Buffer
-	if err := printShowHuman(&buf, cc, iss.ID, showOpts{}); err != nil {
-		t.Fatalf("printShowHuman: %v", err)
-	}
-	out := buf.String()
-	if strings.Contains(out, "LEGACY RULINGS") {
-		t.Fatalf("rendering a bead that has only candidates shows no LEGACY RULINGS, got:\n%s", out)
-	}
-	// Ensure the candidate count is not shown as active but we have no assertion for proposal visibility beyond not-active.
-	// Also ensure statements are indeed candidate
-	list, _ := st2.ListStatements(ctx, store.StatementFilter{Statuses: []string{"candidate"}})
-	if len(list) != 1 {
-		t.Fatalf("expected 1 candidate, got %d", len(list))
-	}
-	active, _ := st2.ListStatements(ctx, store.StatementFilter{Statuses: []string{"active"}})
-	for _, s := range active {
-		if s.Text == "OWNER RULING contract test" {
-			t.Fatalf("candidate should not be active, found in active list %s", s.ID)
-		}
-	}
-	_ = dsn
-}
-
 // Ensure command appears under bd statements --help and go build succeeds is implicit.
 // Test help output contains backfill.
 func TestBackfill_HelpAppears(t *testing.T) {
@@ -622,39 +472,6 @@ func TestBackfill_HelpAppears(t *testing.T) {
 	out2 := buf2.String()
 	if !strings.Contains(out2, "dry-run") {
 		t.Fatalf("bd statements backfill --help should contain dry-run, got %q", out2)
-	}
-}
-
-// Ensure original comments are unchanged after backfill.
-func TestBackfill_DoesNotModifySourceComments(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
-	iss := mkBackfillIssue(t, st, "unchanged")
-	c := addBackfillComment(t, st, iss.ID, "OWNER RULING unchanged test")
-	originalText := c.Text
-	originalID := c.ID
-	_ = st.Close()
-	_, _, err := runBackfillViaRoot(t, []string{})
-	if err != nil {
-		t.Fatalf("backfill: %v", err)
-	}
-	ctx := context.Background()
-	st2, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open2: %v", err)
-	}
-	defer st2.Close()
-	cs, err := st2.ListComments(ctx, iss.ID)
-	if err != nil {
-		t.Fatalf("list comments: %v", err)
-	}
-	if len(cs) != 1 {
-		t.Fatalf("expected 1 comment unchanged, got %d", len(cs))
-	}
-	if cs[0].Text != originalText {
-		t.Fatalf("source comment modified: expected %q got %q", originalText, cs[0].Text)
-	}
-	if cs[0].ID != originalID {
-		t.Fatalf("source comment id changed: %q vs %q", originalID, cs[0].ID)
 	}
 }
 
@@ -683,16 +500,16 @@ func TestIsBackfillCandidate_CoordinatorTagNotAMarker(t *testing.T) {
 
 // Verify filed_by uses resolveActor (not re-reading BD_ACTOR directly) — ensure candidate filed_by contains actor.
 func TestBackfill_FiledByUsesResolveActor(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	iss := mkBackfillIssue(t, st, "filedby")
 	addBackfillComment(t, st, iss.ID, "OWNER RULING filedby")
 	_ = st.Close()
 	t.Setenv("BD_ACTOR", "coordinator")
-	_, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 1 {
 		t.Fatalf("expected 1, got %d", len(list))
 	}
@@ -700,7 +517,7 @@ func TestBackfill_FiledByUsesResolveActor(t *testing.T) {
 		t.Fatalf("filed_by should contain coordinator via resolveActor, got %q", list[0].FiledBy)
 	}
 	// Unset should be owner
-	dsn2, st2 := newTempBackfillStore(t, "bd2")
+	_, st2 := newTempBackfillStore(t, "bd2")
 	iss2 := mkBackfillIssue(t, st2, "filedby2")
 	addBackfillComment(t, st2, iss2.ID, "DEFERRED filedby2")
 	_ = st2.Close()
@@ -710,11 +527,11 @@ func TestBackfill_FiledByUsesResolveActor(t *testing.T) {
 	if _, ok := os.LookupEnv("BD_ACTOR"); ok {
 		t.Fatalf("BD_ACTOR should be unset")
 	}
-	_, _, err = runBackfillViaRoot(t, []string{})
+	previewOut, _, err = runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
 		t.Fatalf("backfill unset: %v", err)
 	}
-	list2 := backfillListStatements(t, dsn2)
+	list2 := backfillPreview(t, previewOut)
 	if len(list2) != 1 {
 		t.Fatalf("expected 1, got %d", len(list2))
 	}
@@ -724,17 +541,14 @@ func TestBackfill_FiledByUsesResolveActor(t *testing.T) {
 }
 
 func TestBackfill_EmptyDB_NoError(t *testing.T) {
-	dsn, st := newTempBackfillStore(t, "bd")
+	_, st := newTempBackfillStore(t, "bd")
 	// No issues, no comments
 	_ = st.Close()
-	out, _, err := runBackfillViaRoot(t, []string{})
+	previewOut, _, err := runBackfillViaRoot(t, backfillPreviewArgs)
 	if err != nil {
-		t.Fatalf("empty db backfill should not error, got %v out %q", err, out)
+		t.Fatalf("empty db backfill should not error, got %v out %q", err, previewOut)
 	}
-	if !strings.Contains(out, "0") {
-		t.Fatalf("empty db should report 0, got %q", out)
-	}
-	list := backfillListStatements(t, dsn)
+	list := backfillPreview(t, previewOut)
 	if len(list) != 0 {
 		t.Fatalf("empty db should have 0 candidates, got %d", len(list))
 	}
@@ -742,3 +556,28 @@ func TestBackfill_EmptyDB_NoError(t *testing.T) {
 
 // Helper to avoid import error for time.
 var _ = time.Now
+
+// TestBackfill_WriteRefused: rulings are legacy, so backfill without --dry-run
+// is refused for every actor and writes no ruling row.
+func TestBackfill_WriteRefused(t *testing.T) {
+	for _, actor := range []string{"", "coordinator"} {
+		t.Run("actor="+actor, func(t *testing.T) {
+			dsn, st := newTempBackfillStore(t, "bd")
+			iss := mkBackfillIssue(t, st, "write refused")
+			addBackfillComment(t, st, iss.ID, "OWNER RULING: would have been a candidate")
+			_ = st.Close()
+			if actor != "" {
+				t.Setenv("BD_ACTOR", actor)
+			}
+			for _, args := range [][]string{{}, {"--json"}} {
+				_, _, err := runBackfillViaRoot(t, args)
+				if err != errRulingsClosed {
+					t.Fatalf("backfill %v = %v, want errRulingsClosed", args, err)
+				}
+			}
+			if n := backfillCountStatements(t, dsn); n != 0 {
+				t.Fatalf("a refused backfill wrote %d statements", n)
+			}
+		})
+	}
+}

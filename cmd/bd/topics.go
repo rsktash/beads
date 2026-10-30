@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/rsktash/beads"
 	"github.com/rsktash/beads/store"
 )
 
@@ -404,57 +403,4 @@ func resolveStatementTopic(cc *cmdCtx, errW io.Writer, issueID, topic string) (s
 		return "", "", "", err
 	}
 	return slug, workspace, strings.Join(concerns, ","), nil
-}
-
-// applyRulingTopic fills topic, workspace and concern on a ruling about to be
-// written. With --answers the question is the source of all three, so a chain
-// question → ruling stays on one slug without the writer retyping it; without
-// --answers the slug is required, project-scoped rulings included.
-func applyRulingTopic(cc *cmdCtx, errW io.Writer, st *beads.Statement, answersID, topic, concern string) error {
-	slug := strings.TrimSpace(topic)
-	if slug != "" {
-		if err := validateTopicSlug("--topic", slug); err != nil {
-			return err
-		}
-	}
-	issueID := ""
-	if st.IssueID != nil {
-		issueID = *st.IssueID
-	}
-	concern = strings.TrimSpace(concern)
-	if concern != "" && issueID != "" {
-		return fmt.Errorf("--concern is only for a project-scoped ruling; an issue-scoped ruling takes its areas from the bead")
-	}
-
-	if answersID != "" {
-		q, err := cc.store.GetStatement(cc.ctx, answersID)
-		if err != nil {
-			return fmt.Errorf("question %s not found: %w", answersID, err)
-		}
-		// A question filed before topics were required carries none; the
-		// writer's own --topic then supplies it rather than refusing a ruling
-		// on a question that cannot be fixed retroactively.
-		if q.Topic != "" {
-			if slug != "" && slug != q.Topic {
-				return fmt.Errorf("--topic %q contradicts %s's topic %q", slug, answersID, q.Topic)
-			}
-			st.Topic, st.Workspace, st.Concern = q.Topic, q.Workspace, q.Concern
-			return nil
-		}
-	}
-
-	if slug == "" {
-		return refuseMissingTopic(cc, errW, issueID)
-	}
-	st.Topic = slug
-	if issueID == "" {
-		st.Concern = concern
-		return nil
-	}
-	workspace, concerns, err := resolveTopicAreas(cc, issueID)
-	if err != nil {
-		return err
-	}
-	st.Workspace, st.Concern = workspace, strings.Join(concerns, ",")
-	return nil
 }

@@ -68,8 +68,8 @@ func newAuthorityCmd() *cobra.Command {
 		Use:   "authority <bead-id | words…>",
 		Short: "The authority brief: what binds this bead, in one capped read",
 		Long: `Print one brief ordered by authority: BRIEF, LEGACY RULINGS, TOPIC, QUESTIONS,
-FINDINGS, DOCTRINE, RELATED. Run it first on any bead or owner question.
-LEGACY RULINGS bind only where no AGENTS.md covers the code.
+FINDINGS, LEGACY DOCTRINE, RELATED. Run it first on any bead or owner question.
+LEGACY RULINGS and LEGACY DOCTRINE bind only where no AGENTS.md covers the code.
 
 Every section is capped and ends with the exact command that shows the rest;
 the whole brief is capped at 6000 bytes, which --max-bytes overrides. --json
@@ -578,11 +578,11 @@ func writeBriefDoctrine(w io.Writer, res store.BriefResult, expand map[string]bo
 			extra: briefExpansionByID(cc, d.ID, expand, tr, d.Text, "", d.Law),
 		})
 	}
-	writeBriefSection(w, "DOCTRINE", rows, briefDoctrineCap, "bd rulings --scope project", sinceLabel)
+	writeBriefSection(w, "LEGACY DOCTRINE", rows, briefDoctrineCap, "bd rulings --scope project", sinceLabel)
 	if res.DoctrineOutside > 0 {
 		label := ""
 		if len(rows) == 0 && sinceLabel == "" {
-			label = "DOCTRINE"
+			label = "LEGACY DOCTRINE"
 		}
 		noun := "laws"
 		if res.DoctrineOutside == 1 {
