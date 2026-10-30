@@ -212,6 +212,9 @@ type Statement struct {
 	// ClosedBy is the actor identity that closed the statement (bd finding
 	// close); FiledBy stays the filer.
 	ClosedBy string `db:"closed_by" json:"closed_by,omitempty"`
+	// AnsweredCommit is the commit that wrote a question's answer into an
+	// AGENTS.md (bd question close --commit).
+	AnsweredCommit string `db:"answered_commit" json:"answered_commit,omitempty"`
 }
 
 type Comment struct {
