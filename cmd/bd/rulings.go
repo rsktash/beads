@@ -15,7 +15,7 @@ func newRulingsCmd() *cobra.Command {
 	var grep string
 	cmd := &cobra.Command{
 		Use:   "rulings [issue-id]",
-		Short: "List active rulings",
+		Short: "List legacy rulings (bind only where no AGENTS.md covers the code)",
 		Long:  "List active rulings. Without an issue id, lists every active ruling in the project newest first. With an issue id, lists what that bead is bound by via the inheritance resolver (same set the contract shows). Use --scope project to list only project-scoped rulings (issue_id IS NULL). Use --grep <kw> to substring-match across every scope (case-insensitive, over law+text); it cannot be combined with an issue id.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -113,6 +113,7 @@ func runRulings(cmd *cobra.Command, args []string, scope, grep string) error {
 		return writeJSONTo(cmd.OutOrStdout(), rulings)
 	}
 
+	fmt.Fprintln(cmd.ErrOrStderr(), "LEGACY — rulings bind only where no AGENTS.md covers the code; elsewhere they are extraction material.")
 	out := cmd.OutOrStdout()
 	terse := wantTerse(out)
 

@@ -583,8 +583,8 @@ func TestBackfill_CandidateNotActiveInContract(t *testing.T) {
 		t.Fatalf("printShowHuman: %v", err)
 	}
 	out := buf.String()
-	if strings.Contains(out, "ACTIVE RULINGS") {
-		t.Fatalf("rendering a bead that has only candidates shows no ACTIVE RULINGS, got:\n%s", out)
+	if strings.Contains(out, "LEGACY RULINGS") {
+		t.Fatalf("rendering a bead that has only candidates shows no LEGACY RULINGS, got:\n%s", out)
 	}
 	// Ensure the candidate count is not shown as active but we have no assertion for proposal visibility beyond not-active.
 	// Also ensure statements are indeed candidate

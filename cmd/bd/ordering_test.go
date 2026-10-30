@@ -117,7 +117,7 @@ func TestOrder_SelfBeforeBinds(t *testing.T) {
 
 	out, errOut, err := runAuthority(t, "authority", bead.ID, "--kind", "rulings")
 	requireNoErr(t, err, errOut)
-	lines := briefSection(out, "RULINGS")
+	lines := briefSection(out, "LEGACY RULINGS")
 	i, j := orderLine(lines, "the self ruling"), orderLine(lines, "the binds ruling")
 	if i < 0 || j < 0 {
 		t.Fatalf("a ruling went missing (self %d, binds %d):\n%s", i, j, out)
@@ -153,7 +153,7 @@ func TestOrder_BindsBeforeEpic(t *testing.T) {
 
 	out, errOut, err := runAuthority(t, "authority", bead.ID, "--kind", "rulings")
 	requireNoErr(t, err, errOut)
-	lines := briefSection(out, "RULINGS")
+	lines := briefSection(out, "LEGACY RULINGS")
 	i, j := orderLine(lines, "the binds ruling"), orderLine(lines, "the epic ruling")
 	if i < 0 || j < 0 {
 		t.Fatalf("a ruling went missing (binds %d, epic %d):\n%s", i, j, out)
@@ -188,7 +188,7 @@ func TestOrder_EpicNearestFirst(t *testing.T) {
 
 	out, errOut, err := runAuthority(t, "authority", bead.ID, "--kind", "rulings")
 	requireNoErr(t, err, errOut)
-	lines := briefSection(out, "RULINGS")
+	lines := briefSection(out, "LEGACY RULINGS")
 	i, j := orderLine(lines, "the depth one ruling"), orderLine(lines, "the depth two ruling")
 	if i < 0 || j < 0 {
 		t.Fatalf("a ruling went missing (depth one %d, depth two %d):\n%s", i, j, out)
@@ -236,7 +236,7 @@ func TestOrder_BlocksBeforeProject(t *testing.T) {
 
 	out, errOut, err := runAuthority(t, "authority", bead.ID, "--kind", "rulings")
 	requireNoErr(t, err, errOut)
-	lines := briefSection(out, "RULINGS")
+	lines := briefSection(out, "LEGACY RULINGS")
 	d, b, p := orderLine(lines, "the depth eight ruling"), orderLine(lines, "the blocks ruling"), orderLine(lines, "the project ruling")
 	if d < 0 || b < 0 || p < 0 {
 		t.Fatalf("a ruling went missing (depth eight %d, blocks %d, project %d):\n%s", d, b, p, out)
@@ -265,7 +265,7 @@ func TestOrder_ChangedSinceHandoffFirstWithinBand(t *testing.T) {
 
 	out, errOut, err := runAuthority(t, "authority", bead.ID, "--kind", "rulings")
 	requireNoErr(t, err, errOut)
-	lines := briefSection(out, "RULINGS")
+	lines := briefSection(out, "LEGACY RULINGS")
 	i, j := orderLine(lines, "the changed ruling"), orderLine(lines, "the fresh unchanged ruling")
 	if i < 0 || j < 0 {
 		t.Fatalf("a ruling went missing (changed %d, fresh %d):\n%s", i, j, out)
@@ -346,7 +346,7 @@ func TestOrder_TieBreakCreatedAtThenId(t *testing.T) {
 
 	out, errOut, err := runAuthority(t, "authority", bead.ID, "--kind", "rulings")
 	requireNoErr(t, err, errOut)
-	lines := briefSection(out, "RULINGS")
+	lines := briefSection(out, "LEGACY RULINGS")
 	n, s, f := orderLine(lines, "the newer ruling"), orderLine(lines, second.ID), orderLine(lines, first.ID)
 	if n < 0 || s < 0 || f < 0 {
 		t.Fatalf("a ruling went missing (newer %d, second %d, first %d):\n%s", n, s, f, out)
@@ -419,7 +419,7 @@ func TestExpand_DedupeDoesNotReorder(t *testing.T) {
 	requireNoErr(t, err, errOut)
 
 	for name, out := range map[string]string{"first": first, "opened": opened, "later": later} {
-		lines := briefSection(out, "RULINGS")
+		lines := briefSection(out, "LEGACY RULINGS")
 		a, b, g := orderLine(lines, "the alpha ruling"), orderLine(lines, beta.ID), orderLine(lines, "the gamma ruling")
 		if a < 0 || b < 0 || g < 0 {
 			t.Fatalf("%s: a ruling went missing (alpha %d, beta %d, gamma %d):\n%s", name, a, b, g, out)
@@ -428,8 +428,8 @@ func TestExpand_DedupeDoesNotReorder(t *testing.T) {
 			t.Fatalf("%s: order changed (alpha %d, beta %d, gamma %d):\n%s", name, a, b, g, out)
 		}
 	}
-	laterLines := briefSection(later, "RULINGS")
-	firstLines := briefSection(first, "RULINGS")
+	laterLines := briefSection(later, "LEGACY RULINGS")
+	firstLines := briefSection(first, "LEGACY RULINGS")
 	if got := laterLines[orderLine(laterLines, beta.ID)]; got != beta.ID+"  (expanded earlier this session)" {
 		t.Fatalf("the later brief did not render the bare id line: %q", got)
 	}
@@ -491,7 +491,7 @@ func TestExpand_NoSessionIdDisablesDedupe(t *testing.T) {
 // and exactly one stderr line says why.
 func assertOrderingDegraded(t *testing.T, out, errOut, why string) {
 	t.Helper()
-	for _, l := range briefSection(out, "RULINGS") {
+	for _, l := range briefSection(out, "LEGACY RULINGS") {
 		if strings.HasPrefix(l, "*") {
 			t.Fatalf("a record carries the * mark with no handoff resolved:\n%s", out)
 		}

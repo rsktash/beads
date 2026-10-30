@@ -175,9 +175,9 @@ func TestContract_TypedBeadOrder(t *testing.T) {
 
 	out := renderContractOutput(t, st, issue.ID, showOpts{})
 
-	// Order: CONTRACT, ACTIVE RULINGS, OPEN QUESTIONS, FINDINGS, BASE TEXT, DEPENDENCIES, NOTES / UNTYPED HISTORY
+	// Order: CONTRACT, LEGACY RULINGS, OPEN QUESTIONS, FINDINGS, BASE TEXT, DEPENDENCIES, NOTES / UNTYPED HISTORY
 	idxContract := indexOrFail(t, out, "CONTRACT")
-	idxRulings := indexOrFail(t, out, "ACTIVE RULINGS — MUST OBEY")
+	idxRulings := indexOrFail(t, out, "LEGACY RULINGS — BIND ONLY WHERE NO AGENTS.md COVERS THE CODE")
 	idxQuestions := indexOrFail(t, out, "OPEN QUESTIONS — EXECUTION BLOCKERS")
 	idxFindings := indexOrFail(t, out, "FINDINGS")
 	idxBase := indexOrFail(t, out, "BASE TEXT")
@@ -208,7 +208,7 @@ func TestContract_SectionOmittedWhenEmpty(t *testing.T) {
 	mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", Text: "only ruling", IssueID: strPtr2(issue.ID)})
 
 	out := renderContractOutput(t, st, issue.ID, showOpts{})
-	mustContain(t, out, "ACTIVE RULINGS — MUST OBEY")
+	mustContain(t, out, "LEGACY RULINGS — BIND ONLY WHERE NO AGENTS.md COVERS THE CODE")
 	mustNotContain(t, out, "OPEN QUESTIONS — EXECUTION BLOCKERS")
 	mustNotContain(t, out, "FINDINGS") // findings header should not appear if no findings? But check: FINDINGS header should be omitted when no findings.
 	// However typed bead previously had findings, so we check that absence is correct.
@@ -219,7 +219,7 @@ func TestContract_SectionOmittedWhenEmpty(t *testing.T) {
 	mustNotContainCI(t, out, "comment")
 }
 
-// Legacy bead — comments present, zero statements: untyped history renders ABOVE BASE TEXT under exact banner, no ACTIVE RULINGS.
+// Legacy bead — comments present, zero statements: untyped history renders ABOVE BASE TEXT under exact banner, no LEGACY RULINGS.
 func TestContract_LegacyBead(t *testing.T) {
 	_, st := newTempContractStore(t, "bd")
 	defer st.Close()
@@ -245,9 +245,9 @@ func TestContract_LegacyBead(t *testing.T) {
 	if idxLegacy > idxBase {
 		t.Fatalf("legacy history should be above BASE TEXT: legacy %d base %d\n%s", idxLegacy, idxBase, out)
 	}
-	// No ACTIVE RULINGS header anywhere
-	if strings.Contains(out, "ACTIVE RULINGS") {
-		t.Fatalf("legacy bead should have no ACTIVE RULINGS header, got:\n%s", out)
+	// No LEGACY RULINGS header anywhere
+	if strings.Contains(out, "LEGACY RULINGS") {
+		t.Fatalf("legacy bead should have no LEGACY RULINGS header, got:\n%s", out)
 	}
 	// Check newest first order: third, second, first
 	idxThird := strings.Index(out, "third entry")
@@ -280,7 +280,7 @@ func TestContract_MixedBead(t *testing.T) {
 	}
 	out := renderContractOutput(t, st, issue.ID, showOpts{})
 	// Should have typed section above BASE TEXT
-	idxRulings := indexOrFail(t, out, "ACTIVE RULINGS — MUST OBEY")
+	idxRulings := indexOrFail(t, out, "LEGACY RULINGS — BIND ONLY WHERE NO AGENTS.md COVERS THE CODE")
 	idxBase := indexOrFail(t, out, "BASE TEXT")
 	if idxRulings > idxBase {
 		t.Fatalf("typed section should be above BASE TEXT: rulings %d base %d\n%s", idxRulings, idxBase, out)
@@ -364,7 +364,7 @@ func TestContract_SupersededChain(t *testing.T) {
 		t.Fatalf("second ruling text should not appear, got:\n%s", out)
 	}
 	// Ensure only one ruling line? Count occurrences of "R-"
-	// But there should be exactly one R- line in ACTIVE RULINGS
+	// But there should be exactly one R- line in LEGACY RULINGS
 	// We check that output contains only one ruling id substring: r3.ID appears once
 	count := strings.Count(out, r3.ID)
 	if count != 1 {

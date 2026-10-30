@@ -48,7 +48,7 @@ func renderContractSections(w io.Writer, issue *beads.Issue, cv store.ContractVi
 
 	// Normal path: typed sections above base text, history below dependencies.
 	if len(cv.Rulings) > 0 {
-		fmt.Fprintln(w, "\nACTIVE RULINGS — MUST OBEY")
+		fmt.Fprintln(w, "\nLEGACY RULINGS — BIND ONLY WHERE NO AGENTS.md COVERS THE CODE")
 		for _, r := range cv.Rulings {
 			if opts.rulingsMode == rulingsModeFull {
 				fmt.Fprintln(w, "  "+rulingFullLine(r, issue.ID))

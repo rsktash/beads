@@ -28,7 +28,7 @@ func newSessionCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "close",
 		Short: "Print what this session left untyped",
-		Long: `Print what this session left untyped: owner decisions with no ruling, open
+		Long: `Print what this session left untyped: owner decisions not yet in an AGENTS.md, open
 questions it touched, and beads it claimed but did not close.
 
 The session id comes from --session, else $CLAUDE_SESSION_ID, else $BD_SESSION_ID.
@@ -81,12 +81,12 @@ func resolveSessionID(flag string) string {
 func writeSessionCloseReport(w io.Writer, rep store.SessionCloseReport) {
 	fmt.Fprintf(w, "SESSION %s  closing\n", rep.SessionID)
 
-	sessionSection(w, "OWNER DECISIONS WITH NO RULING", len(rep.OwnerDecisions), func() {
+	sessionSection(w, "OWNER DECISIONS NOT YET IN AN AGENTS.md", len(rep.OwnerDecisions), func() {
 		for _, d := range rep.OwnerDecisions {
 			// The author column is the resolved role, and every listed row is
 			// the owner by construction of the section.
 			fmt.Fprintf(w, "  %s  %s  owner  %s\n", d.CommentID, d.CreatedAt.Format(sessionTimeFormat), previewText(d.Text))
-			fmt.Fprintf(w, "          bd ruling add %s \"<text>\" --topic <slug>\n", d.IssueID)
+			fmt.Fprintf(w, "          propose an AGENTS.md edit in the folder it governs (%s); the owner approves\n", d.IssueID)
 		}
 	})
 

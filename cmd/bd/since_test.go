@@ -88,7 +88,7 @@ func TestSince_DateNarrowsSections(t *testing.T) {
 		want  string
 		gone  string
 	}{
-		{label: "RULINGS", want: "new ruling", gone: "old ruling"},
+		{label: "LEGACY RULINGS", want: "new ruling", gone: "old ruling"},
 		{label: "QUESTIONS", want: "new question", gone: "old question"},
 		{label: "FINDINGS", want: "new finding", gone: "old finding"},
 		{label: "COMMENTS", want: "new comment", gone: "old comment"},

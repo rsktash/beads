@@ -109,13 +109,13 @@ func TestSessionClose_OwnerDecisionWithoutRuling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session close: %v", err)
 	}
-	if !strings.Contains(out, "OWNER DECISIONS WITH NO RULING (1)") {
+	if !strings.Contains(out, "OWNER DECISIONS NOT YET IN AN AGENTS.md (1)") {
 		t.Fatalf("expected one owner decision, got:\n%s", out)
 	}
 	if !strings.Contains(out, "ruled: the cursor helper stays pure") {
 		t.Fatalf("expected the comment text, got:\n%s", out)
 	}
-	wantCmd := "bd ruling add " + issue.ID + ` "<text>" --topic <slug>`
+	wantCmd := "propose an AGENTS.md edit in the folder it governs (" + issue.ID + "); the owner approves"
 	if !strings.Contains(out, wantCmd) {
 		t.Fatalf("expected prepared command %q, got:\n%s", wantCmd, out)
 	}
@@ -132,11 +132,11 @@ func TestSessionClose_OwnerDecisionWithRulingOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session close: %v", err)
 	}
-	if !strings.Contains(out, "OWNER DECISIONS WITH NO RULING (0)") {
+	if !strings.Contains(out, "OWNER DECISIONS NOT YET IN AN AGENTS.md (0)") {
 		t.Fatalf("a typed decision must not be listed, got:\n%s", out)
 	}
-	if strings.Contains(out, "bd ruling add "+issue.ID) {
-		t.Fatalf("no prepared ruling command expected, got:\n%s", out)
+	if strings.Contains(out, "governs ("+issue.ID+")") {
+		t.Fatalf("no prepared AGENTS.md prompt expected, got:\n%s", out)
 	}
 }
 
@@ -150,7 +150,7 @@ func TestSessionClose_IgnoresNonPrefixComment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session close: %v", err)
 	}
-	if !strings.Contains(out, "OWNER DECISIONS WITH NO RULING (0)") {
+	if !strings.Contains(out, "OWNER DECISIONS NOT YET IN AN AGENTS.md (0)") {
 		t.Fatalf("a comment with no acceptance prefix must not be listed, got:\n%s", out)
 	}
 	if strings.Contains(out, "looks fine") {
@@ -201,7 +201,7 @@ func TestSessionClose_IgnoresAgentComment(t *testing.T) {
 	if !strings.Contains(out, ownerText) {
 		t.Fatalf("the owner comment must still be listed, got:\n%s", out)
 	}
-	if !strings.Contains(out, "OWNER DECISIONS WITH NO RULING (1)") {
+	if !strings.Contains(out, "OWNER DECISIONS NOT YET IN AN AGENTS.md (1)") {
 		t.Fatalf("expected exactly one owner decision, got:\n%s", out)
 	}
 }
@@ -312,7 +312,7 @@ func TestSessionClose_EmptySectionsPrintNone(t *testing.T) {
 	}
 	for _, want := range []string{
 		"SESSION " + testSessionID + "  closing",
-		"OWNER DECISIONS WITH NO RULING (0)",
+		"OWNER DECISIONS NOT YET IN AN AGENTS.md (0)",
 		"OPEN QUESTIONS TOUCHED (0)",
 		"CLAIMED BUT NOT CLOSED (0)",
 	} {

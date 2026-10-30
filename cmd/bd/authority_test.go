@@ -149,7 +149,7 @@ func TestAuthority_SectionOrder(t *testing.T) {
 	out, errOut, err := runAuthority(t, "authority", bead.ID)
 	requireNoErr(t, err, errOut)
 
-	want := []string{"BRIEF", "RULINGS", "TOPIC", "QUESTIONS", "FINDINGS", "DOCTRINE", "RELATED"}
+	want := []string{"BRIEF", "LEGACY RULINGS", "TOPIC", "QUESTIONS", "FINDINGS", "DOCTRINE", "RELATED"}
 	at := -1
 	for _, label := range want {
 		idx := strings.Index(out, "\n"+label+" ")
@@ -214,7 +214,7 @@ func TestAuthority_RulingsCappedAtTwelveWithMore(t *testing.T) {
 	out, errOut, err := runAuthority(t, "authority", bead.ID)
 	requireNoErr(t, err, errOut)
 
-	lines := briefSection(out, "RULINGS")
+	lines := briefSection(out, "LEGACY RULINGS")
 	if len(lines) != 13 {
 		t.Fatalf("want 12 ruling lines plus the more line, got %d:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
@@ -322,7 +322,7 @@ func TestAuthority_InheritedRulingsPresent(t *testing.T) {
 	out, errOut, err := runAuthority(t, "authority", bead.ID)
 	requireNoErr(t, err, errOut)
 
-	lines := strings.Join(briefSection(out, "RULINGS"), "\n")
+	lines := strings.Join(briefSection(out, "LEGACY RULINGS"), "\n")
 	if !strings.Contains(lines, "the epic's law") {
 		t.Fatalf("the inherited ruling is missing:\n%s", out)
 	}
@@ -552,7 +552,7 @@ func TestAuthority_GrepFiltersBuiltSections(t *testing.T) {
 
 	out, errOut, err := runAuthority(t, "authority", bead.ID, "--grep", "keyword")
 	requireNoErr(t, err, errOut)
-	lines := strings.Join(briefSection(out, "RULINGS"), "\n")
+	lines := strings.Join(briefSection(out, "LEGACY RULINGS"), "\n")
 	if !strings.Contains(lines, "the keyword ruling") || strings.Contains(lines, "an unrelated ruling") {
 		t.Fatalf("--grep did not filter the built section:\n%s", lines)
 	}

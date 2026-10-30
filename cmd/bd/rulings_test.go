@@ -45,9 +45,13 @@ func TestRulingsList_TerseOneLinePerRuling(t *testing.T) {
 	_ = st.Close()
 
 	t.Setenv(EnvTerse, "1")
-	out, _, err := runRulingsCmd(t, []string{issue.ID})
+	out, errOut, err := runRulingsCmd(t, []string{issue.ID})
 	if err != nil {
 		t.Fatalf("rulings %s: %v", issue.ID, err)
+	}
+	// The legacy label rides stderr, so stdout keeps its terse shape.
+	if !strings.Contains(errOut, "LEGACY — rulings bind only where no AGENTS.md covers the code") {
+		t.Fatalf("stderr must carry the legacy label, got %q", errOut)
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) != 2 {

@@ -67,8 +67,9 @@ func newAuthorityCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "authority <bead-id | words…>",
 		Short: "The authority brief: what binds this bead, in one capped read",
-		Long: `Print one brief ordered by authority: BRIEF, RULINGS, TOPIC, QUESTIONS,
+		Long: `Print one brief ordered by authority: BRIEF, LEGACY RULINGS, TOPIC, QUESTIONS,
 FINDINGS, DOCTRINE, RELATED. Run it first on any bead or owner question.
+LEGACY RULINGS bind only where no AGENTS.md covers the code.
 
 Every section is capped and ends with the exact command that shows the rest;
 the whole brief is capped at 6000 bytes, which --max-bytes overrides. --json
@@ -275,7 +276,7 @@ func renderBrief(w io.Writer, cc *cmdCtx, res store.BriefResult, req store.Brief
 	writeBriefLine(w, "BRIEF", briefHeaderLine(res, req))
 
 	if req.Wants(store.BriefKindRulings) {
-		writeBriefSection(w, "RULINGS", briefRulingRows(res, expand, cc, tr),
+		writeBriefSection(w, "LEGACY RULINGS", briefRulingRows(res, expand, cc, tr),
 			briefRulingsCap, briefMoreCmd("bd rulings", res.IssueID), req.SinceLabel)
 	}
 	if len(req.Kinds) == 0 {

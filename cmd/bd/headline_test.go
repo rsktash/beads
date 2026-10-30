@@ -131,17 +131,17 @@ func TestHeadline_WorkfileHeaderMatchesShow(t *testing.T) {
 
 	extractRulingsBlock := func(s string) string {
 		t.Helper()
-		start := strings.Index(s, "\nACTIVE RULINGS")
+		start := strings.Index(s, "\nLEGACY RULINGS")
 		end := strings.Index(s, "\nBASE TEXT")
 		if start < 0 || end < 0 {
-			t.Fatalf("missing ACTIVE RULINGS or BASE TEXT marker in:\n%s", s)
+			t.Fatalf("missing LEGACY RULINGS or BASE TEXT marker in:\n%s", s)
 		}
 		return s[start:end]
 	}
 	outlineBlock := extractRulingsBlock(bufOutline.String())
 	defaultBlock := extractRulingsBlock(bufDefault.String())
 	if outlineBlock != defaultBlock {
-		t.Fatalf("ACTIVE RULINGS block differs between workfile (outline) and default show:\nworkfile: %q\ndefault:  %q", outlineBlock, defaultBlock)
+		t.Fatalf("LEGACY RULINGS block differs between workfile (outline) and default show:\nworkfile: %q\ndefault:  %q", outlineBlock, defaultBlock)
 	}
 }
 
