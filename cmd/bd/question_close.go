@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
+	"path"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -49,9 +52,10 @@ func newQuestionCloseCmd() *cobra.Command {
 		reason string
 		note   string
 		of     string
+		commit string
 	)
 	cmd := &cobra.Command{
-		Use:   "close <question-id> --reason <code> --note <why>",
+		Use:   "close <question-id> --reason <code> --note <why> | --commit <sha>",
 		Short: "Close a question without minting a ruling (actor-gated: BD_ACTOR=executor is refused)",
 		Long: `Close a question that stopped being an execution blocker, without filing a ruling.
 
@@ -61,6 +65,11 @@ Reasons:
   --reason superseded  a better question replaces it; status becomes superseded. --of is required and names the replacing question.
 
 --note is required for every reason. A reason code alone is not a record.
+
+--commit <sha> closes a question the owner answered: the sha names the commit that
+wrote the answer into an AGENTS.md. It takes no --reason or --of; the status becomes
+answered and the sha is stored in its own column. The commit must exist in the
+current repository and change at least one AGENTS.md.
 
 The --of link is written to the closed question's answered_by column, so the
 closed question points at the question that took its place. The named question
@@ -81,7 +90,17 @@ Actor gating: BD_ACTOR=executor cannot close questions; use a finding or questio
 			if questionID == "" {
 				return fmt.Errorf("question id is required")
 			}
+			commitVal := strings.TrimSpace(commit)
+			if commitVal != "" {
+				if strings.TrimSpace(reason) != "" || strings.TrimSpace(of) != "" {
+					return fmt.Errorf("--commit takes no --reason or --of")
+				}
+				return closeQuestionWithCommit(cmd, questionID, commitVal)
+			}
 			reasonVal := strings.TrimSpace(reason)
+			if reasonVal == "" {
+				return fmt.Errorf("--reason is required (%s) unless --commit is given", strings.Join(questionCloseReasonList, "|"))
+			}
 			spec, known := questionCloseReasons[reasonVal]
 			if !known {
 				return fmt.Errorf("invalid --reason %q (%s)", reasonVal, strings.Join(questionCloseReasonList, "|"))
@@ -142,12 +161,73 @@ Actor gating: BD_ACTOR=executor cannot close questions; use a finding or questio
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&reason, "reason", "", "why it stopped blocking: moot|duplicate|superseded (required)")
-	cmd.Flags().StringVar(&note, "note", "", "the record of why, in words (required)")
+	cmd.Flags().StringVar(&reason, "reason", "", "why it stopped blocking: moot|duplicate|superseded (required without --commit)")
+	cmd.Flags().StringVar(&note, "note", "", "the record of why, in words (required without --commit)")
 	cmd.Flags().StringVar(&of, "of", "", "the surviving (duplicate) or replacing (superseded) question id")
-	_ = cmd.MarkFlagRequired("reason")
-	_ = cmd.MarkFlagRequired("note")
+	cmd.Flags().StringVar(&commit, "commit", "", "the AGENTS.md commit that answers the question (exclusive with --reason)")
 	return cmd
+}
+
+// closeQuestionWithCommit closes an active question as answered by the named
+// commit, which must exist in the current repository and touch an AGENTS.md.
+func closeQuestionWithCommit(cmd *cobra.Command, questionID, commit string) error {
+	cc, err := openStore(cmd)
+	if err != nil {
+		return err
+	}
+	defer cc.store.Close()
+
+	q, err := cc.store.GetStatement(cc.ctx, questionID)
+	if err != nil {
+		return fmt.Errorf("question %s not found: %w", questionID, err)
+	}
+	if q.Kind != "question" {
+		return fmt.Errorf("statement %s is not a question (is %s)", questionID, q.Kind)
+	}
+	if q.Status != "active" {
+		return fmt.Errorf("question %s is not active (is %s); it is already closed", questionID, q.Status)
+	}
+
+	sha, err := verifyAgentsCommit(cc.ctx, commit)
+	if err != nil {
+		return err
+	}
+	if err := cc.store.CloseQuestionWithCommit(cc.ctx, questionID, sha); err != nil {
+		return err
+	}
+
+	updated, err := cc.store.GetStatement(cc.ctx, questionID)
+	if err != nil {
+		return err
+	}
+	if cc.json || flagJSON {
+		return writeJSONTo(cmd.OutOrStdout(), updated)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), updated.ID)
+	return nil
+}
+
+// verifyAgentsCommit resolves commit to its full sha in the current repository
+// and checks that it changes at least one AGENTS.md.
+func verifyAgentsCommit(ctx context.Context, commit string) (string, error) {
+	if strings.HasPrefix(commit, "-") {
+		return "", fmt.Errorf("--commit %q is not a commit", commit)
+	}
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", commit+"^{commit}").Output()
+	if err != nil {
+		return "", fmt.Errorf("--commit %s is not a commit in the current repository", commit)
+	}
+	sha := strings.TrimSpace(string(out))
+	files, err := exec.CommandContext(ctx, "git", "show", "--name-only", "--format=", sha).Output()
+	if err != nil {
+		return "", fmt.Errorf("git show %s: %w", sha, err)
+	}
+	for _, f := range strings.Split(string(files), "\n") {
+		if path.Base(strings.TrimSpace(f)) == "AGENTS.md" {
+			return sha, nil
+		}
+	}
+	return "", fmt.Errorf("--commit %s changes no AGENTS.md; a question closes on the commit that wrote its answer into an AGENTS.md", commit)
 }
 
 // survivorWord names what --of points at for a given reason.

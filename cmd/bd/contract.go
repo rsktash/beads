@@ -161,6 +161,9 @@ func formatClosedQuestionLine(q beads.Statement, answerKinds map[string]string) 
 		}
 		line += fmt.Sprintf("  %s: %s", kind, *q.AnsweredBy)
 	}
+	if q.AnsweredCommit != "" {
+		line += fmt.Sprintf("  answered by commit %s", q.AnsweredCommit)
+	}
 	line += "  " + q.Text
 	if isClosure && note != "" {
 		line += fmt.Sprintf("  note: %s", note)
