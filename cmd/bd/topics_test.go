@@ -254,86 +254,6 @@ func TestTopic_RejectsBadSlug(t *testing.T) {
 	}
 }
 
-func TestTopic_RulingInheritsThroughAnswers(t *testing.T) {
-	st := newTempTopicsStore(t)
-	issue := mkTopicsIssue(t, st, "inherit", "## Files\n\n- server/src/auth.ts\n")
-
-	out, _, err := runTopicsRoot(t, "question", "add", issue.ID, "which delimiter?", "--topic", "mxik-name-drift")
-	if err != nil {
-		t.Fatalf("question add: %v", err)
-	}
-	qID := strings.TrimSpace(out)
-
-	out, _, err = runTopicsRoot(t, "ruling", "add", issue.ID, "use the colon", "--answers", qID)
-	if err != nil {
-		t.Fatalf("ruling add --answers: %v", err)
-	}
-	r := getTopicStatement(t, st, strings.TrimSpace(out))
-	if r.Topic != "mxik-name-drift" {
-		t.Fatalf("ruling should inherit the question's topic, got %q", r.Topic)
-	}
-	if r.Workspace != "server" {
-		t.Fatalf("ruling should inherit the question's workspace, got %q", r.Workspace)
-	}
-	if !strings.Contains(r.Concern, "authority") {
-		t.Fatalf("ruling should inherit the question's concerns, got %q", r.Concern)
-	}
-}
-
-func TestTopic_RulingRejectsContradictingTopic(t *testing.T) {
-	st := newTempTopicsStore(t)
-	issue := mkTopicsIssue(t, st, "contradiction", "")
-
-	out, _, err := runTopicsRoot(t, "question", "add", issue.ID, "the question", "--topic", "topic-one")
-	if err != nil {
-		t.Fatalf("question add: %v", err)
-	}
-	qID := strings.TrimSpace(out)
-	before := countTopicStatements(t, st)
-
-	_, _, err = runTopicsRoot(t, "ruling", "add", issue.ID, "the ruling", "--answers", qID, "--topic", "topic-two")
-	if err == nil {
-		t.Fatalf("a --topic contradicting the answered question should be refused")
-	}
-	if !strings.Contains(err.Error(), "topic-one") || !strings.Contains(err.Error(), "topic-two") {
-		t.Fatalf("error should name both slugs, got %q", err)
-	}
-	if !strings.Contains(err.Error(), qID) {
-		t.Fatalf("error should name the question, got %q", err)
-	}
-	if after := countTopicStatements(t, st); after != before {
-		t.Fatalf("refusal should write nothing, before %d after %d", before, after)
-	}
-}
-
-func TestTopic_RulingWithoutAnswersRequiresTopic(t *testing.T) {
-	st := newTempTopicsStore(t)
-	issue := mkTopicsIssue(t, st, "ruling needs a topic", "")
-
-	_, errStr, err := runTopicsRoot(t, "ruling", "add", issue.ID, "a ruling with no slug")
-	if err == nil {
-		t.Fatalf("ruling add without --topic should fail")
-	}
-	if !strings.Contains(errStr, "--topic is required") {
-		t.Fatalf("stderr should carry the refusal, got %q", errStr)
-	}
-	if n := countTopicStatements(t, st); n != 0 {
-		t.Fatalf("refusal should write nothing, got %d statements", n)
-	}
-
-	// A project-scoped ruling is no exception.
-	_, errStr, err = runTopicsRoot(t, "ruling", "add", "a project-wide ruling with no slug")
-	if err == nil {
-		t.Fatalf("project-scoped ruling add without --topic should fail")
-	}
-	if !strings.Contains(errStr, "--topic is required") {
-		t.Fatalf("stderr should carry the refusal for a project ruling, got %q", errStr)
-	}
-	if n := countTopicStatements(t, st); n != 0 {
-		t.Fatalf("refusal should write nothing, got %d statements", n)
-	}
-}
-
 func TestTopic_CarriesBeadAreas(t *testing.T) {
 	st := newTempTopicsStore(t)
 	issue := mkTopicsIssue(t, st, "auth work", "## Files\n\n- server/src/auth.ts\n")
@@ -475,18 +395,17 @@ func TestTopics_SupersededChainCompacts(t *testing.T) {
 	st := newTempTopicsStore(t)
 	issue := mkTopicsIssue(t, st, "chain", "")
 
-	out, _, err := runTopicsRoot(t, "ruling", "add", issue.ID, "the first answer", "--topic", "slug-chain")
-	if err != nil {
-		t.Fatalf("first ruling: %v", err)
+	r1 := mkTopicStatement(t, st, "ruling", issue.ID, "slug-chain", "", "").ID
+	amended := &beads.Statement{
+		Kind: "ruling", IssueID: &issue.ID, Text: "the amended answer", FiledBy: "owner:tester",
+		Topic: "slug-chain", SupersedesID: &r1,
 	}
-	r1 := strings.TrimSpace(out)
-	out, _, err = runTopicsRoot(t, "ruling", "add", issue.ID, "the amended answer", "--topic", "slug-chain", "--supersedes", r1)
-	if err != nil {
+	if err := st.CreateStatement(context.Background(), amended); err != nil {
 		t.Fatalf("second ruling: %v", err)
 	}
-	r2 := strings.TrimSpace(out)
+	r2 := amended.ID
 
-	out, _, err = runTopicsRoot(t, "topics")
+	out, _, err := runTopicsRoot(t, "topics")
 	if err != nil {
 		t.Fatalf("topics: %v", err)
 	}

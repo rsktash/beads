@@ -69,7 +69,6 @@ func TestQuestionAnswerFinding_KindMismatchBothDirections(t *testing.T) {
 	q1 := mkQuestion(t, st, issue.ID, "q1")
 	q2 := mkQuestion(t, st, issue.ID, "q2")
 	rID := mkStatementQF(t, st, issue.ID, "ruling", "a ruling")
-	fID := mkStatementQF(t, st, issue.ID, "finding", "a finding")
 	_ = st.Close()
 	asOwner(t)
 
@@ -81,31 +80,46 @@ func TestQuestionAnswerFinding_KindMismatchBothDirections(t *testing.T) {
 	if got := getStatementQF(t, dsn, q1); got.Status != "active" || got.AnsweredBy != nil {
 		t.Fatalf("question must be unchanged after the refusal, got %+v", got)
 	}
-	// --ruling pointing at a finding.
-	_, _, err = runQuestionCmd(t, []string{"answer", q2, "--ruling", fID})
-	if err == nil || !strings.Contains(err.Error(), "not a ruling") {
-		t.Fatalf("--ruling naming a finding must be refused, got %v", err)
+	// --finding pointing at a question.
+	_, _, err = runQuestionCmd(t, []string{"answer", q2, "--finding", q1})
+	if err == nil || !strings.Contains(err.Error(), "not a finding") {
+		t.Fatalf("--finding naming a question must be refused, got %v", err)
 	}
 	if got := getStatementQF(t, dsn, q2); got.Status != "active" || got.AnsweredBy != nil {
 		t.Fatalf("question must be unchanged after the refusal, got %+v", got)
 	}
 }
 
-func TestQuestionAnswerFinding_BothFlagsRefused(t *testing.T) {
-	dsn, st := newTempQFStore(t, "bd")
-	issue := mkQFIssue(t, st, "both flags")
-	qID := mkQuestion(t, st, issue.ID, "q")
-	rID := mkStatementQF(t, st, issue.ID, "ruling", "r")
-	fID := mkStatementQF(t, st, issue.ID, "finding", "f")
-	_ = st.Close()
-	asOwner(t)
-
-	_, _, err := runQuestionCmd(t, []string{"answer", qID, "--ruling", rID, "--finding", fID})
-	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Fatalf("both flags must be refused as mutually exclusive, got %v", err)
-	}
-	if got := getStatementQF(t, dsn, qID); got.Status != "active" || got.AnsweredBy != nil {
-		t.Fatalf("question must be unchanged, got %+v", got)
+// TestQuestionAnswer_RulingRefusedForEveryActor: rulings are legacy, so
+// answer --ruling is refused before the actor check, alone or beside
+// --finding, and the question stays open.
+func TestQuestionAnswer_RulingRefusedForEveryActor(t *testing.T) {
+	for _, actor := range []string{"", "coordinator", "executor"} {
+		t.Run("actor="+actor, func(t *testing.T) {
+			dsn, st := newTempQFStore(t, "bd")
+			issue := mkQFIssue(t, st, "ruling answer refused")
+			qID := mkQuestion(t, st, issue.ID, "q")
+			rID := mkStatementQF(t, st, issue.ID, "ruling", "r")
+			fID := mkStatementQF(t, st, issue.ID, "finding", "f")
+			_ = st.Close()
+			if actor == "" {
+				asOwner(t)
+			} else {
+				t.Setenv("BD_ACTOR", actor)
+			}
+			for _, args := range [][]string{
+				{"answer", qID, "--ruling", rID},
+				{"answer", qID, "--ruling", rID, "--finding", fID},
+			} {
+				_, _, err := runQuestionCmd(t, args)
+				if err != errRulingsClosed {
+					t.Fatalf("%v = %v, want errRulingsClosed", args, err)
+				}
+			}
+			if got := getStatementQF(t, dsn, qID); got.Status != "active" || got.AnsweredBy != nil {
+				t.Fatalf("question must be unchanged, got %+v", got)
+			}
+		})
 	}
 }
 
@@ -130,14 +144,12 @@ func TestQuestionAnswer_ExecutorRefusedAndNothingWritten(t *testing.T) {
 	issue := mkQFIssue(t, st, "executor answer")
 	qID := mkQuestion(t, st, issue.ID, "may I settle this myself?")
 	fID := mkStatementQF(t, st, issue.ID, "finding", "my own finding")
-	rID := mkStatementQF(t, st, issue.ID, "ruling", "a ruling")
 	_ = st.Close()
 
 	t.Setenv("BD_ACTOR", "executor")
 	want := "BD_ACTOR=executor: executors cannot file rulings; a coordinator or the owner (unset BD_ACTOR) may — executors may file findings or questions instead"
 	for _, args := range [][]string{
 		{"answer", qID, "--finding", fID},
-		{"answer", qID, "--ruling", rID},
 	} {
 		_, _, err := runQuestionCmd(t, args)
 		if err == nil {
@@ -169,10 +181,19 @@ func TestQuestionAnswer_ShowNamesTheAnsweringKind(t *testing.T) {
 		issue := mkQFIssue(t, st, "show "+tc.kind)
 		qID := mkQuestion(t, st, issue.ID, "the question")
 		aID := mkStatementQF(t, st, issue.ID, tc.kind, "the answer")
+		// A legacy ruling answer exists only as stored data now; it still
+		// renders under its kind.
+		if tc.kind == "ruling" {
+			if err := st.SetAnsweredBy(ctx, qID, aID); err != nil {
+				t.Fatalf("seed ruling answer: %v", err)
+			}
+		}
 		_ = st.Close()
 		asOwner(t)
-		if _, _, err := runQuestionCmd(t, []string{"answer", qID, "--" + tc.kind, aID}); err != nil {
-			t.Fatalf("answer --%s: %v", tc.kind, err)
+		if tc.kind == "finding" {
+			if _, _, err := runQuestionCmd(t, []string{"answer", qID, "--finding", aID}); err != nil {
+				t.Fatalf("answer --finding: %v", err)
+			}
 		}
 		st2, err := store.Open(ctx, dsn)
 		if err != nil {

@@ -335,7 +335,7 @@ func TestQuestionAnswer_Success(t *testing.T) {
 		t.Fatalf("create q: %v", err)
 	}
 	qID := q.ID
-	r := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "ruling answer", FiledBy: "coordinator:tester", Status: "active", Scope: "inherit"}
+	r := &beads.Statement{Kind: "finding", IssueID: &issue.ID, Text: "ruling answer", FiledBy: "coordinator:tester", Status: "active", Scope: "inherit"}
 	if err := st.CreateStatement(ctx, r); err != nil {
 		t.Fatalf("create r: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestQuestionAnswer_Success(t *testing.T) {
 	rBefore := getStatementQF(t, dsn, rID)
 	_ = st.Close()
 	t.Setenv("BD_ACTOR", "coordinator")
-	out, _, err := runQuestionCmd(t, []string{"answer", qID, "--ruling", rID})
+	out, _, err := runQuestionCmd(t, []string{"answer", qID, "--finding", rID})
 	if err != nil {
 		t.Fatalf("answer should succeed: %v out %q", err, out)
 	}
@@ -375,14 +375,14 @@ func TestQuestionAnswer_Success(t *testing.T) {
 func TestQuestionAnswer_NonExistentQuestionFails(t *testing.T) {
 	dsn, st := newTempQFStore(t, "bd")
 	issue := mkQFIssue(t, st, "answer fail q")
-	r := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "ruling", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
+	r := &beads.Statement{Kind: "finding", IssueID: &issue.ID, Text: "ruling", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
 	if err := st.CreateStatement(context.Background(), r); err != nil {
 		t.Fatalf("create ruling: %v", err)
 	}
 	_ = st.Close()
 	before := countStatementsQF(t, dsn)
 	t.Setenv("BD_ACTOR", "coordinator")
-	_, _, err := runQuestionCmd(t, []string{"answer", "Q-9999", "--ruling", r.ID})
+	_, _, err := runQuestionCmd(t, []string{"answer", "Q-9999", "--finding", r.ID})
 	if err == nil {
 		t.Fatalf("answering non-existent question should fail")
 	}
@@ -396,7 +396,7 @@ func TestQuestionAnswer_NonExistentQuestionFails(t *testing.T) {
 	// Also check question not created as side effect
 }
 
-func TestQuestionAnswer_NonExistentRulingFails(t *testing.T) {
+func TestQuestionAnswer_NonExistentFindingFails(t *testing.T) {
 	dsn, st := newTempQFStore(t, "bd")
 	issue := mkQFIssue(t, st, "answer fail r")
 	q := &beads.Statement{Kind: "question", IssueID: &issue.ID, Text: "q", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
@@ -408,11 +408,11 @@ func TestQuestionAnswer_NonExistentRulingFails(t *testing.T) {
 	// Capture question before
 	qBefore := getStatementQF(t, dsn, q.ID)
 	t.Setenv("BD_ACTOR", "coordinator")
-	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", "R-9999"})
+	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--finding", "F-9999"})
 	if err == nil {
 		t.Fatalf("answering with non-existent ruling should fail")
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "ruling") {
+	if !strings.Contains(strings.ToLower(err.Error()), "finding") {
 		t.Fatalf("error should mention ruling, got %q", err.Error())
 	}
 	after := countStatementsQF(t, dsn)
@@ -433,14 +433,14 @@ func TestQuestionAnswer_NotAQuestionFails(t *testing.T) {
 	if err := st.CreateStatement(context.Background(), q); err != nil {
 		t.Fatalf("create finding: %v", err)
 	}
-	r := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "ruling", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
+	r := &beads.Statement{Kind: "finding", IssueID: &issue.ID, Text: "ruling", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
 	if err := st.CreateStatement(context.Background(), r); err != nil {
 		t.Fatalf("create ruling: %v", err)
 	}
 	_ = st.Close()
 	before := countStatementsQF(t, dsn)
 	t.Setenv("BD_ACTOR", "coordinator")
-	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", r.ID})
+	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--finding", r.ID})
 	if err == nil {
 		t.Fatalf("answering a finding (not a question) should fail")
 	}
@@ -467,11 +467,11 @@ func TestQuestionAnswer_AlreadyAnsweredFails(t *testing.T) {
 	if err := st.CreateStatement(ctx, q); err != nil {
 		t.Fatalf("create q: %v", err)
 	}
-	r1 := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "r1", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
+	r1 := &beads.Statement{Kind: "finding", IssueID: &issue.ID, Text: "r1", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
 	if err := st.CreateStatement(ctx, r1); err != nil {
 		t.Fatalf("create r1: %v", err)
 	}
-	r2 := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "r2", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
+	r2 := &beads.Statement{Kind: "finding", IssueID: &issue.ID, Text: "r2", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
 	if err := st.CreateStatement(ctx, r2); err != nil {
 		t.Fatalf("create r2: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestQuestionAnswer_AlreadyAnsweredFails(t *testing.T) {
 	}
 	_ = st.Close()
 	t.Setenv("BD_ACTOR", "coordinator")
-	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", r2.ID})
+	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--finding", r2.ID})
 	if err == nil {
 		t.Fatalf("answering already answered question should fail")
 	}
@@ -494,30 +494,6 @@ func TestQuestionAnswer_AlreadyAnsweredFails(t *testing.T) {
 	if qAfter.AnsweredBy == nil || *qAfter.AnsweredBy != r1.ID {
 		t.Fatalf("should remain answered by %s, got %v", r1.ID, qAfter.AnsweredBy)
 	}
-}
-
-func TestQuestionAnswer_RulingNotRulingFails(t *testing.T) {
-	dsn, st := newTempQFStore(t, "bd")
-	issue := mkQFIssue(t, st, "ruling not ruling")
-	q := &beads.Statement{Kind: "question", IssueID: &issue.ID, Text: "q", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
-	if err := st.CreateStatement(context.Background(), q); err != nil {
-		t.Fatalf("create q: %v", err)
-	}
-	f := &beads.Statement{Kind: "finding", IssueID: &issue.ID, Text: "finding not ruling", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
-	if err := st.CreateStatement(context.Background(), f); err != nil {
-		t.Fatalf("create finding: %v", err)
-	}
-	_ = st.Close()
-	t.Setenv("BD_ACTOR", "coordinator")
-	_, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", f.ID})
-	if err == nil {
-		t.Fatalf("answering with a finding as ruling should fail")
-	}
-	low := strings.ToLower(err.Error())
-	if !strings.Contains(low, "not a ruling") && !strings.Contains(low, "ruling") {
-		t.Fatalf("error should mention not a ruling, got %q", err.Error())
-	}
-	_ = dsn
 }
 
 func TestQuestion_JsonPrintsStatement(t *testing.T) {
@@ -576,7 +552,7 @@ func TestQuestionAnswer_JsonPrintsUpdated(t *testing.T) {
 	if err := st.CreateStatement(ctx, q); err != nil {
 		t.Fatalf("create q: %v", err)
 	}
-	r := &beads.Statement{Kind: "ruling", IssueID: &issue.ID, Text: "r", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
+	r := &beads.Statement{Kind: "finding", IssueID: &issue.ID, Text: "r", FiledBy: "owner:tester", Status: "active", Scope: "inherit"}
 	if err := st.CreateStatement(ctx, r); err != nil {
 		t.Fatalf("create r: %v", err)
 	}
@@ -585,7 +561,7 @@ func TestQuestionAnswer_JsonPrintsUpdated(t *testing.T) {
 	old := flagJSON
 	flagJSON = true
 	t.Cleanup(func() { flagJSON = old })
-	out, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--ruling", r.ID})
+	out, _, err := runQuestionCmd(t, []string{"answer", q.ID, "--finding", r.ID})
 	if err != nil {
 		t.Fatalf("json answer: %v", err)
 	}

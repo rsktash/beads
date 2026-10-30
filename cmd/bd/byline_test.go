@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/rsktash/beads"
-	"github.com/rsktash/beads/store"
 )
 
 // TestByline_QuestionCarriesAuthor files a question with BD_ACTOR unset (the
@@ -77,26 +75,13 @@ func TestByline_EmptyFiledByRendersUnknown(t *testing.T) {
 }
 
 // TestVerbatim_RoundTrips checks the owner's verbatim sentence round-trips
-// untouched through `bd ruling add --verbatim` and GetStatement.
+// untouched through the store and GetStatement.
 func TestVerbatim_RoundTrips(t *testing.T) {
-	dsn, st := newTempContractStore(t, "bd")
+	_, st := newTempContractStore(t, "bd")
 	issue := mkContractIssue(t, st, "verbatim roundtrip", "")
-	st.Close()
+	r := mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", IssueID: strPtr2(issue.ID), Text: "ruling text", Verbatim: "go with A", FiledBy: "owner:tester"})
 
-	t.Setenv("BD_ACTOR", "coordinator")
-	out, _, err := runRulingAdd(t, []string{"add", issue.ID, "ruling text", "--verbatim", "go with A"})
-	if err != nil {
-		t.Fatalf("ruling add: %v", err)
-	}
-	rID := strings.TrimSpace(out)
-
-	ctx := context.Background()
-	st2, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer st2.Close()
-	got, err := st2.GetStatement(ctx, rID)
+	got, err := st.GetStatement(context.Background(), r.ID)
 	if err != nil {
 		t.Fatalf("get statement: %v", err)
 	}
@@ -108,45 +93,21 @@ func TestVerbatim_RoundTrips(t *testing.T) {
 // TestVerbatim_AbsentFromHeadline checks the verbatim sentence never appears
 // in the default (unexpanded) rendering.
 func TestVerbatim_AbsentFromHeadline(t *testing.T) {
-	dsn, st := newTempContractStore(t, "bd")
+	_, st := newTempContractStore(t, "bd")
 	issue := mkContractIssue(t, st, "verbatim absent from headline", "")
-	st.Close()
+	mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", IssueID: strPtr2(issue.ID), Text: "headline text", Verbatim: "the secret verbatim sentence", FiledBy: "owner:tester"})
 
-	t.Setenv("BD_ACTOR", "coordinator")
-	if _, _, err := runRulingAdd(t, []string{"add", issue.ID, "headline text", "--verbatim", "the secret verbatim sentence"}); err != nil {
-		t.Fatalf("ruling add: %v", err)
-	}
-
-	ctx := context.Background()
-	st2, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer st2.Close()
-	out := renderContractOutput(t, st2, issue.ID, showOpts{})
+	out := renderContractOutput(t, st, issue.ID, showOpts{})
 	mustNotContain(t, out, "the secret verbatim sentence")
 }
 
 // TestVerbatim_ShownOnExpand checks the same verbatim sentence appears once
 // the ruling's id is passed to --expand.
 func TestVerbatim_ShownOnExpand(t *testing.T) {
-	dsn, st := newTempContractStore(t, "bd")
+	_, st := newTempContractStore(t, "bd")
 	issue := mkContractIssue(t, st, "verbatim shown on expand", "")
-	st.Close()
+	r := mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", IssueID: strPtr2(issue.ID), Text: "headline text", Verbatim: "the expand verbatim sentence", FiledBy: "owner:tester"})
 
-	t.Setenv("BD_ACTOR", "coordinator")
-	out, _, err := runRulingAdd(t, []string{"add", issue.ID, "headline text", "--verbatim", "the expand verbatim sentence"})
-	if err != nil {
-		t.Fatalf("ruling add: %v", err)
-	}
-	rID := strings.TrimSpace(out)
-
-	ctx := context.Background()
-	st2, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer st2.Close()
-	rendered := renderContractOutput(t, st2, issue.ID, showOpts{expand: map[string]bool{rID: true}})
+	rendered := renderContractOutput(t, st, issue.ID, showOpts{expand: map[string]bool{r.ID: true}})
 	mustContain(t, rendered, "the expand verbatim sentence")
 }

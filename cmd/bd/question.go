@@ -85,11 +85,12 @@ func newQuestionAnswerCmd() *cobra.Command {
 		findingID string
 	)
 	cmd := &cobra.Command{
-		Use:   "answer <question-id> --ruling <id> | --finding <id>",
-		Short: "Answer a question with a ruling or a finding (actor-gated: BD_ACTOR=executor is refused)",
+		Use:   "answer <question-id> --finding <id>",
+		Short: "Answer a question with a finding (actor-gated: BD_ACTOR=executor is refused)",
 		Long: `Mark a question as answered. Sets the question's answered_by to the named statement and its status to answered.
 
---ruling names a ruling: a judgment settled the question.
+--ruling is refused for every actor: rulings are legacy. A question the owner
+decided closes with bd question close --commit <sha>.
 --finding names a finding: evidence settled it, and no ruling is minted. Use this
 when nobody decided anything and the answer is what the evidence already says.
 
@@ -99,6 +100,9 @@ names, so an evidence-settled question stays distinguishable from a ruled one.
 Actor gating: BD_ACTOR=executor cannot answer questions; an executor files the finding and leaves the question open. BD_ACTOR=coordinator or unset (owner) is allowed.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(rulingID) != "" {
+				return errRulingsClosed
+			}
 			identity, isExecutor := resolveActor()
 			if isExecutor {
 				return executorRefusal(identity)
@@ -120,7 +124,7 @@ Actor gating: BD_ACTOR=executor cannot answer questions; an executor files the f
 				answerID, answerKind = fid, "finding"
 			}
 			if answerID == "" {
-				return fmt.Errorf("--ruling or --finding is required")
+				return fmt.Errorf("--finding is required")
 			}
 			cc, err := openStore(cmd)
 			if err != nil {
@@ -168,7 +172,7 @@ Actor gating: BD_ACTOR=executor cannot answer questions; an executor files the f
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&rulingID, "ruling", "", "ruling id that answers the question (exclusive with --finding)")
+	cmd.Flags().StringVar(&rulingID, "ruling", "", "refused: rulings are legacy")
 	cmd.Flags().StringVar(&findingID, "finding", "", "finding id whose evidence answers the question (exclusive with --ruling)")
 	return cmd
 }

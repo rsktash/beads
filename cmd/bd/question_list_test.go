@@ -105,14 +105,15 @@ func TestQuestionList_AnsweredRowNamesTheKind(t *testing.T) {
 	q2 := mkQuestion(t, st, a.ID, "settled by judgment")
 	fID := mkStatementQF(t, st, a.ID, "finding", "the evidence")
 	rID := mkStatementQF(t, st, a.ID, "ruling", "the decision")
+	// A legacy ruling answer exists only as stored data now.
+	if err := st.SetAnsweredBy(context.Background(), q2, rID); err != nil {
+		t.Fatalf("seed ruling answer: %v", err)
+	}
 	_ = st.Close()
 
 	asOwner(t)
 	if _, _, err := runQuestionCmd(t, []string{"answer", q1, "--finding", fID}); err != nil {
 		t.Fatalf("answer --finding: %v", err)
-	}
-	if _, _, err := runQuestionCmd(t, []string{"answer", q2, "--ruling", rID}); err != nil {
-		t.Fatalf("answer --ruling: %v", err)
 	}
 	out, _, err := runQuestionCmd(t, []string{"list", "--status", "answered"})
 	if err != nil {

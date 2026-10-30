@@ -80,66 +80,6 @@ func runCitationSource(t *testing.T, id string) (string, error) {
 	return out.String(), err
 }
 
-func TestCite_StampsHeadSha(t *testing.T) {
-	fx := newCitationCLIFixture(t, true)
-	issue := mkIssueForRuling(t, fx.st, "stamp head")
-	want := mustGit(t, fx.root, "rev-parse", "HEAD")
-
-	out, _, err := runRulingAdd(t, []string{"add", issue.ID, "use tracked.txt::initial:1"})
-	if err != nil {
-		t.Fatalf("ruling add: %v", err)
-	}
-	id := strings.TrimSpace(out)
-	got, err := fx.st.StatementHeadSHA(context.Background(), id)
-	if err != nil {
-		t.Fatalf("StatementHeadSHA: %v", err)
-	}
-	if got != want {
-		t.Fatalf("head_sha = %q, want %q", got, want)
-	}
-}
-
-func TestCite_NoGitLeavesShaEmpty(t *testing.T) {
-	fx := newCitationCLIFixture(t, false)
-	issue := mkIssueForRuling(t, fx.st, "no git")
-	out, _, err := runRulingAdd(t, []string{"add", issue.ID, "no repository here"})
-	if err != nil {
-		t.Fatalf("ruling add: %v", err)
-	}
-	got, err := fx.st.StatementHeadSHA(context.Background(), strings.TrimSpace(out))
-	if err != nil {
-		t.Fatalf("StatementHeadSHA: %v", err)
-	}
-	if got != "" {
-		t.Fatalf("head_sha = %q, want empty", got)
-	}
-}
-
-func TestCite_RefusesBareLineCitation(t *testing.T) {
-	fx := newCitationCLIFixture(t, false)
-	issue := mkIssueForRuling(t, fx.st, "bare line")
-	_, _, err := runRulingAdd(t, []string{"add", issue.ID, "cite server/src/x.ts:214"})
-	const want = "cite the symbol: server/src/x.ts::<symbol>:214, not server/src/x.ts:214"
-	if err == nil || err.Error() != want {
-		t.Fatalf("error = %v, want %q", err, want)
-	}
-	rows, listErr := fx.st.ListStatements(context.Background(), store.StatementFilter{})
-	if listErr != nil {
-		t.Fatalf("ListStatements: %v", listErr)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("bare-line refusal wrote %d statement rows", len(rows))
-	}
-}
-
-func TestCite_AllowsSymbolWithLine(t *testing.T) {
-	fx := newCitationCLIFixture(t, false)
-	issue := mkIssueForRuling(t, fx.st, "symbol line")
-	if _, _, err := runRulingAdd(t, []string{"add", issue.ID, "cite server/src/x.ts::buildCursor:214"}); err != nil {
-		t.Fatalf("symbol-first citation refused: %v", err)
-	}
-}
-
 func TestCite_BriefRendersStates(t *testing.T) {
 	fx := newCitationCLIFixture(t, false)
 	issue := mkIssueForRuling(t, fx.st, "brief states")

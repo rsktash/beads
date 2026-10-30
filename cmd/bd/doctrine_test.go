@@ -72,20 +72,26 @@ func mkDoctrineIssue(t *testing.T, st *store.Store, title string) *beads.Issue {
 	return i
 }
 
-// addLaw files one doctrine through the CLI and returns its ruling id.
-func addLaw(t *testing.T, text, concern, law, topic string, extra ...string) string {
+// addLaw seeds one doctrine — a project-scoped ruling carrying an area and a
+// law — through the store and returns its ruling id. extra holds flag/value
+// pairs: --rationale and --verbatim.
+func addLaw(t *testing.T, st *store.Store, text, concern, law, topic string, extra ...string) string {
 	t.Helper()
-	args := []string{"ruling", "add", text, "--doctrine", "--concern", concern, "--law", law, "--topic", topic}
-	args = append(args, extra...)
-	out, errOut, err := runDoctrine(t, args...)
-	if err != nil {
-		t.Fatalf("ruling add %q failed: %v (stderr %q)", law, err, errOut)
+	r := &beads.Statement{Kind: "ruling", Text: text, Concern: concern, Law: law, Topic: topic, FiledBy: "owner:tester"}
+	for i := 0; i+1 < len(extra); i += 2 {
+		switch extra[i] {
+		case "--rationale":
+			r.Rationale = extra[i+1]
+		case "--verbatim":
+			r.Verbatim = extra[i+1]
+		default:
+			t.Fatalf("addLaw: unknown flag %q", extra[i])
+		}
 	}
-	id := strings.TrimSpace(out)
-	if id == "" {
-		t.Fatalf("ruling add printed no id (stderr %q)", errOut)
+	if err := st.CreateStatement(context.Background(), r); err != nil {
+		t.Fatalf("seed law %q: %v", law, err)
 	}
-	return id
+	return r.ID
 }
 
 // showDoctrine renders one bead's contract straight through the renderer.
@@ -114,144 +120,13 @@ func countAllStatements(t *testing.T, st *store.Store) int {
 	return len(list)
 }
 
-// --- Behaviour 2: --doctrine requires --law and a project scope ---
-
-func TestDoctrine_RequiresLawAndProjectScope(t *testing.T) {
-	st := newTempDoctrineStore(t)
-	bead := mkDoctrineIssue(t, st, "a bead")
-
-	_, _, err := runDoctrine(t, "ruling", "add", bead.ID, "the text", "--doctrine",
-		"--concern", "authority", "--law", "Admin rides the grant path.", "--topic", "admin-authority")
-	if err == nil {
-		t.Fatalf("--doctrine with an issue id must be refused")
-	}
-	if !strings.Contains(err.Error(), "takes no issue id") {
-		t.Fatalf("the refusal must name the issue id as the problem, got %q", err)
-	}
-
-	_, _, err = runDoctrine(t, "ruling", "add", "the text", "--doctrine",
-		"--concern", "authority", "--topic", "admin-authority")
-	if err == nil {
-		t.Fatalf("--doctrine with no --law must be refused")
-	}
-	if !strings.Contains(err.Error(), "--law") {
-		t.Fatalf("the refusal must name --law, got %q", err)
-	}
-
-	if n := countAllStatements(t, st); n != 0 {
-		t.Fatalf("a refused doctrine must write nothing, got %d statements", n)
-	}
-}
-
-func TestDoctrine_LawCappedAt200(t *testing.T) {
-	newTempDoctrineStore(t)
-	long := strings.Repeat("a", 200) + "."
-	_, _, err := runDoctrine(t, "ruling", "add", "the text", "--doctrine",
-		"--concern", "authority", "--law", long, "--topic", "admin-authority")
-	if err == nil {
-		t.Fatalf("a 201-character law must be refused")
-	}
-	if !strings.Contains(err.Error(), "201") || !strings.Contains(err.Error(), "200") {
-		t.Fatalf("the refusal must name the length and the limit, got %q", err)
-	}
-
-	ok := strings.Repeat("a", 199) + "."
-	if _, _, err := runDoctrine(t, "ruling", "add", "the text", "--doctrine",
-		"--concern", "authority", "--law", ok, "--topic", "admin-authority"); err != nil {
-		t.Fatalf("a 200-character law is at the cap, not over it: %v", err)
-	}
-}
-
-func TestDoctrine_LawNeedsFullStop(t *testing.T) {
-	newTempDoctrineStore(t)
-	_, _, err := runDoctrine(t, "ruling", "add", "the text", "--doctrine",
-		"--concern", "authority", "--law", "Admin rides the grant path", "--topic", "admin-authority")
-	if err == nil {
-		t.Fatalf("an unpunctuated law must be refused")
-	}
-	if !strings.Contains(err.Error(), "full stop") {
-		t.Fatalf("the refusal must name the full stop, got %q", err)
-	}
-}
-
-func TestDoctrine_RationaleCappedAt600(t *testing.T) {
-	newTempDoctrineStore(t)
-	_, _, err := runDoctrine(t, "ruling", "add", "the text", "--doctrine",
-		"--concern", "authority", "--law", "Admin rides the grant path.",
-		"--rationale", strings.Repeat("b", 601), "--topic", "admin-authority")
-	if err == nil {
-		t.Fatalf("a 601-character rationale must be refused")
-	}
-	if !strings.Contains(err.Error(), "601") || !strings.Contains(err.Error(), "600") {
-		t.Fatalf("the refusal must name the length and the limit, got %q", err)
-	}
-
-	if _, _, err := runDoctrine(t, "ruling", "add", "the text", "--doctrine",
-		"--concern", "authority", "--law", "Admin rides the grant path.",
-		"--rationale", strings.Repeat("b", 600), "--topic", "admin-authority"); err != nil {
-		t.Fatalf("a 600-character rationale is at the cap, not over it: %v", err)
-	}
-}
-
-// --- Behaviour 4: the area vocabulary is closed ---
-
-func TestDoctrine_UnknownConcernRefused(t *testing.T) {
-	newTempDoctrineStore(t)
-	_, _, err := runDoctrine(t, "ruling", "add", "the text", "--doctrine",
-		"--concern", "authorty", "--law", "Admin rides the grant path.", "--topic", "admin-authority")
-	if err == nil {
-		t.Fatalf("an unknown concern must be refused")
-	}
-	msg := err.Error()
-	for _, name := range []string{"authority", "sync", "tokens", "schema", "catalog", "frontend", "all"} {
-		if !strings.Contains(msg, name) {
-			t.Fatalf("the refusal must list the vocabulary; %q is missing from %q", name, msg)
-		}
-	}
-
-	if _, _, err := runDoctrine(t, "doctrine", "list", "--concern", "authorty"); err == nil {
-		t.Fatalf("bd doctrine list must refuse an unknown concern too")
-	}
-	if _, _, err := runDoctrine(t, "doctrine", "list", "--workspace", "servr"); err == nil {
-		t.Fatalf("bd doctrine list must refuse an unknown workspace too")
-	}
-}
-
-// --- Behaviour 5: the same-area laws print before the write ---
-
-func TestDoctrine_PrintsSameAreaDoctrinesBeforeWrite(t *testing.T) {
-	newTempDoctrineStore(t)
-	existing := addLaw(t, "the first ruling text", "authority",
-		"Admin permissions are a platform business row plus a CM grant.", "admin-authority")
-	addLaw(t, "an unrelated ruling text", "catalog",
-		"Catalog routes by MXIK code, never by name.", "catalog-routing")
-
-	out, errOut, err := runDoctrine(t, "ruling", "add", "a second authority text", "--doctrine",
-		"--concern", "authority", "--law", "Grants expire.", "--topic", "admin-authority")
-	if err != nil {
-		t.Fatalf("the write must succeed: %v (stderr %q)", err, errOut)
-	}
-	if !strings.Contains(errOut, "Admin permissions are a platform business row plus a CM grant.") {
-		t.Fatalf("stderr must hold the existing law, got %q", errOut)
-	}
-	if !strings.Contains(errOut, existing) {
-		t.Fatalf("stderr must cite the existing ruling id %s, got %q", existing, errOut)
-	}
-	if strings.Contains(errOut, "Catalog routes by MXIK code") {
-		t.Fatalf("stderr must hold same-area laws only, got %q", errOut)
-	}
-	if strings.Contains(out, "Admin permissions") || strings.Count(strings.TrimSpace(out), "\n") != 0 {
-		t.Fatalf("stdout must hold only the new id, got %q", out)
-	}
-}
-
 // --- bd doctrine list ---
 
 func TestDoctrine_ListPrintsIDAreaAndLaw(t *testing.T) {
-	newTempDoctrineStore(t)
-	id := addLaw(t, "the ruling text", "authority",
+	st := newTempDoctrineStore(t)
+	id := addLaw(t, st, "the ruling text", "authority",
 		"Admin permissions are a platform business row plus a CM grant.", "admin-authority")
-	addLaw(t, "another ruling text", "catalog",
+	addLaw(t, st, "another ruling text", "catalog",
 		"Catalog routes by MXIK code, never by name.", "catalog-routing")
 
 	out, errOut, err := runDoctrine(t, "doctrine", "list")
@@ -275,10 +150,10 @@ func TestDoctrine_ListPrintsIDAreaAndLaw(t *testing.T) {
 // --- Behaviour 7: render groups by area in the vocabulary's order ---
 
 func TestDoctrine_RenderGroupsByArea(t *testing.T) {
-	newTempDoctrineStore(t)
-	addLaw(t, "text one", "catalog", "Catalog routes by MXIK code, never by name.", "catalog-routing")
-	addLaw(t, "text two", "authority", "Admin permissions are a platform business row plus a CM grant.", "admin-authority")
-	addLaw(t, "text three", "authority", "Grants expire.", "admin-authority",
+	st := newTempDoctrineStore(t)
+	addLaw(t, st, "text one", "catalog", "Catalog routes by MXIK code, never by name.", "catalog-routing")
+	addLaw(t, st, "text two", "authority", "Admin permissions are a platform business row plus a CM grant.", "admin-authority")
+	addLaw(t, st, "text three", "authority", "Grants expire.", "admin-authority",
 		"--rationale", "Because a grant without an end date is a permanent one.")
 
 	out, errOut, err := runDoctrine(t, "doctrine", "render")
@@ -318,8 +193,8 @@ func TestDoctrine_RenderGroupsByArea(t *testing.T) {
 }
 
 func TestDoctrine_RenderHasGeneratedBanner(t *testing.T) {
-	newTempDoctrineStore(t)
-	addLaw(t, "text one", "authority", "Admin permissions are a platform business row plus a CM grant.", "admin-authority")
+	st := newTempDoctrineStore(t)
+	addLaw(t, st, "text one", "authority", "Admin permissions are a platform business row plus a CM grant.", "admin-authority")
 
 	out, errOut, err := runDoctrine(t, "doctrine", "render")
 	if err != nil {
@@ -336,14 +211,14 @@ func TestDoctrine_RenderHasGeneratedBanner(t *testing.T) {
 func TestDoctrine_ShowRendersLawNotText(t *testing.T) {
 	st := newTempDoctrineStore(t)
 	bead := mkDoctrineIssue(t, st, "a bead")
-	id := addLaw(t, "a long ruling text nobody wants in a headline", "authority",
+	id := addLaw(t, st, "a long ruling text nobody wants in a headline", "authority",
 		"Admin permissions are a platform business row plus a CM grant.", "admin-authority",
 		"--rationale", "One authorization path, one audit table.",
 		"--verbatim", "both approved")
 
 	out := showDoctrine(t, st, bead.ID)
 	if !strings.Contains(out, "Admin permissions are a platform business row plus a CM grant.") {
-		t.Fatalf("the ACTIVE RULINGS line must carry the law, got\n%s", out)
+		t.Fatalf("the LEGACY RULINGS line must carry the law, got\n%s", out)
 	}
 	if strings.Contains(out, "a long ruling text nobody wants in a headline") {
 		t.Fatalf("the ruling text must not render without --expand, got\n%s", out)
@@ -367,10 +242,7 @@ func TestDoctrine_ShowRendersLawNotText(t *testing.T) {
 func TestDoctrine_LawlessProjectRulingUnchanged(t *testing.T) {
 	st := newTempDoctrineStore(t)
 	bead := mkDoctrineIssue(t, st, "a bead")
-	if _, _, err := runDoctrine(t, "ruling", "add", "a project ruling with no law at all",
-		"--topic", "legacy-slug"); err != nil {
-		t.Fatalf("a lawless project ruling must still file: %v", err)
-	}
+	mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", Text: "a project ruling with no law at all", Topic: "legacy-slug", FiledBy: "owner:tester"})
 
 	out := showDoctrine(t, st, bead.ID)
 	if !strings.Contains(out, "a project ruling with no law at all") {
@@ -383,11 +255,7 @@ func TestDoctrine_LawlessProjectRulingUnchanged(t *testing.T) {
 func TestDoctrine_PromoteRescopesInPlace(t *testing.T) {
 	st := newTempDoctrineStore(t)
 	bead := mkDoctrineIssue(t, st, "a bead")
-	out, errOut, err := runDoctrine(t, "ruling", "add", bead.ID, "a ruling that outgrew its bead", "--topic", "admin-authority")
-	if err != nil {
-		t.Fatalf("ruling add failed: %v (stderr %q)", err, errOut)
-	}
-	id := strings.TrimSpace(out)
+	id := mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", IssueID: strPtr2(bead.ID), Text: "a ruling that outgrew its bead", Topic: "admin-authority", FiledBy: "owner:tester"}).ID
 	before := countAllStatements(t, st)
 
 	if _, errOut, err := runDoctrine(t, "doctrine", "promote", id, "--concern", "authority"); err != nil {
@@ -423,14 +291,10 @@ func TestDoctrine_PromoteRescopesInPlace(t *testing.T) {
 func TestDoctrine_PromoteRefusesExecutor(t *testing.T) {
 	st := newTempDoctrineStore(t)
 	bead := mkDoctrineIssue(t, st, "a bead")
-	out, _, err := runDoctrine(t, "ruling", "add", bead.ID, "a ruling that outgrew its bead", "--topic", "admin-authority")
-	if err != nil {
-		t.Fatalf("ruling add failed: %v", err)
-	}
-	id := strings.TrimSpace(out)
+	id := mustCreateStatementDirect(t, st, &beads.Statement{Kind: "ruling", IssueID: strPtr2(bead.ID), Text: "a ruling that outgrew its bead", Topic: "admin-authority", FiledBy: "owner:tester"}).ID
 
 	t.Setenv("BD_ACTOR", "executor")
-	_, _, err = runDoctrine(t, "doctrine", "promote", id, "--concern", "authority")
+	_, _, err := runDoctrine(t, "doctrine", "promote", id, "--concern", "authority")
 	if err == nil {
 		t.Fatalf("an executor must not promote a ruling to doctrine")
 	}

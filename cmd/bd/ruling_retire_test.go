@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -9,9 +10,70 @@ import (
 	"github.com/rsktash/beads/store"
 )
 
+// runRulingRetire runs ruling retire as the owner at an interactive terminal.
 func runRulingRetire(t *testing.T, args []string) (string, string, error) {
 	t.Helper()
+	orig := stdinIsTerminal
+	stdinIsTerminal = func() bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = orig })
 	return runRulingAdd(t, args)
+}
+
+// TestRetire_RefusedWithoutTerminal: an agent's shell has no terminal on
+// stdin, so retire refuses, points at a finding, and changes nothing — for
+// every actor.
+func TestRetire_RefusedWithoutTerminal(t *testing.T) {
+	for _, actor := range []string{"coordinator", "executor"} {
+		t.Run(actor, func(t *testing.T) {
+			dsn, st := newTempRulingStore(t, "bd")
+			issue := mkIssueForRuling(t, st, "retire without terminal")
+			rID := mkRulingStatement(t, st, issue.ID, "active ruling")
+			_ = st.Close()
+
+			orig := stdinIsTerminal
+			stdinIsTerminal = func() bool { return false }
+			t.Cleanup(func() { stdinIsTerminal = orig })
+			t.Setenv("BD_ACTOR", actor)
+			_, _, err := runRulingAdd(t, []string{"retire", rID, "--note", "stale"})
+			if err == nil {
+				t.Fatalf("retire without a terminal must be refused")
+			}
+			for _, want := range []string{"interactive terminal", "finding"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("refusal %q must name %q", err.Error(), want)
+				}
+			}
+			ctx := context.Background()
+			st2, err := store.Open(ctx, dsn)
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			defer st2.Close()
+			got, err := st2.GetStatement(ctx, rID)
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if got.Status != "active" {
+				t.Fatalf("a refused retire changed status to %s", got.Status)
+			}
+		})
+	}
+}
+
+// TestInteractiveTerminal_DevNullIsNot: /dev/null is a character device, the
+// stdin an agent's shell runs with, and must not pass for a terminal.
+func TestInteractiveTerminal_DevNullIsNot(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer f.Close()
+	if !isTerminalWriter(f) {
+		t.Skipf("%s is not a character device here", os.DevNull)
+	}
+	if isInteractiveTerminal(f) {
+		t.Fatalf("%s must not count as an interactive terminal", os.DevNull)
+	}
 }
 
 func TestRetire_FlipsStatusNoNewRow(t *testing.T) {

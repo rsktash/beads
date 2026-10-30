@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,7 +13,7 @@ func newRulingRetireCmd() *cobra.Command {
 	var note string
 	cmd := &cobra.Command{
 		Use:   "retire <ruling-id>",
-		Short: "Retire a ruling in place (actor-gated: BD_ACTOR=executor is refused)",
+		Short: "Retire a legacy ruling in place (owner only: interactive terminal)",
 		Long: `Retire a ruling: its status flips to retired in place, no new row is minted.
 A retired ruling stops rendering in the contract and in bd rulings, same as a
 superseded one, but stays readable via bd statements list --status retired
@@ -19,9 +21,13 @@ and bd get.
 
 --note is required and records why the ruling no longer applies.
 
-Actor gating: BD_ACTOR=executor cannot retire rulings; use a finding or question instead. BD_ACTOR=coordinator or unset (owner) is allowed.`,
+Runs only from an interactive terminal: an agent's shell has no terminal on stdin,
+so an agent that finds a stale ruling files a finding instead.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !stdinIsTerminal() {
+				return errors.New("ruling retire runs only from the owner's interactive terminal; an agent files a finding naming the stale ruling")
+			}
 			identity, isExecutor := resolveActor()
 			if isExecutor {
 				return executorRefusal(identity)
@@ -62,3 +68,7 @@ Actor gating: BD_ACTOR=executor cannot retire rulings; use a finding or question
 	cmd.Flags().StringVar(&note, "note", "", "why the ruling is being retired (required)")
 	return cmd
 }
+
+// stdinIsTerminal reports whether stdin is an interactive terminal. Tests
+// replace it to stand in for the owner's terminal.
+var stdinIsTerminal = func() bool { return isInteractiveTerminal(os.Stdin) }

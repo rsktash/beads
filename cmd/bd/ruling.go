@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -14,10 +15,21 @@ import (
 	"github.com/rsktash/beads/store"
 )
 
+// rulingsClosed refuses every new ruling, whoever the actor: the rule source is
+// the AGENTS.md of each folder.
+const rulingsClosed = true
+
+var errRulingsClosed = errors.New("rulings are legacy: no ruling is added. Propose the rule as an AGENTS.md edit for the owner; an answered question closes with bd question close <Q-id> --commit <sha>")
+
 func newRulingCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "ruling",
-		Short: "Manage rulings (typed authority records)",
+		Short: "Legacy rulings: bind only where no AGENTS.md covers the code",
+		Long: `Rulings are legacy. The rule source is the AGENTS.md of each folder. A ruling
+binds only where no AGENTS.md covers the code yet (a project not yet migrated, or a
+module whose AGENTS.md has not landed); elsewhere it is raw material for extraction.
+No ruling is added: ruling add is refused. ruling retire runs only from the owner's
+interactive terminal.`,
 	}
 	root.AddCommand(newRulingAddCmd())
 	root.AddCommand(newRulingRetireCmd())
@@ -65,7 +77,7 @@ func newRulingAddCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "add [<issue-id>] <text> --topic <slug>",
-		Short: "File a ruling (actor-gated: BD_ACTOR=executor is refused)",
+		Short: "Refused for every actor: rulings are legacy",
 		Long: `File a ruling. With one arg, files a project-scoped ruling (issue_id NULL). With two args, first is issue id, second is text.
 
 With --answers the bead is derived from the question: the ruling lands on the
@@ -92,6 +104,9 @@ still time to supersede instead.
 Actor gating: BD_ACTOR=executor cannot file rulings; use a finding or question instead. BD_ACTOR=coordinator or unset (owner) is allowed.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if rulingsClosed {
+				return errRulingsClosed
+			}
 			identity, isExecutor := resolveActor()
 			if isExecutor {
 				return executorRefusal(identity)
