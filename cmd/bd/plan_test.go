@@ -375,7 +375,7 @@ func TestPlan_OpenToExecutor(t *testing.T) {
 		t.Fatalf("id suffix = %d chars, want 4 (%q)", got, planID)
 	}
 
-	if out, err := runPlan(t, "lane", "add", planID, "A", "--queue", a.ID+","+b.ID, "--mode", "codex"); err != nil {
+	if out, err := runPlan(t, "lane", "add", planID, "A", "--queue", a.ID+","+b.ID, "--mode", "opencode"); err != nil {
 		t.Fatalf("lane add: %v (%s)", err, out)
 	}
 	if out, err := runPlan(t, "claim", planID, "--lane", "A", "--session", "sess-exec"); err != nil {
@@ -391,6 +391,23 @@ func TestPlan_OpenToExecutor(t *testing.T) {
 	}
 	if lane.Holder != "" || lane.Cursor != 1 {
 		t.Fatalf("lane after handoff = holder %q cursor %d, want released at 1", lane.Holder, lane.Cursor)
+	}
+}
+
+func TestPlan_LaneModeCodexRefused(t *testing.T) {
+	st := newTempPlanStore(t)
+	a := mkPlanIssue(t, st, "only")
+	out, err := runPlan(t, "create", "Codex is legacy")
+	if err != nil {
+		t.Fatalf("create: %v (%s)", err, out)
+	}
+	planID := strings.TrimSpace(out)
+	_, err = runPlan(t, "lane", "add", planID, "A", "--queue", a.ID, "--mode", "codex")
+	if err == nil || !strings.Contains(err.Error(), "inline, subagent, opencode") {
+		t.Fatalf("lane add --mode codex = %v, want a refusal naming inline, subagent, opencode", err)
+	}
+	if _, err := st.GetLane(context.Background(), planID, "A"); err == nil {
+		t.Fatalf("a refused lane add must write no lane")
 	}
 }
 

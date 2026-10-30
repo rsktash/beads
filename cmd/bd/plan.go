@@ -27,7 +27,7 @@ const threadLineCap = 5
 
 // planModes is the closed vocabulary migration 0008 CHECKs; validated here so
 // a typo reports a lane mode rather than a SQL constraint.
-var planModes = map[string]bool{"inline": true, "subagent": true, "codex": true}
+var planModes = map[string]bool{"inline": true, "subagent": true, "opencode": true}
 
 func newPlanCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -117,7 +117,7 @@ func newPlanLaneAddCmd() *cobra.Command {
 				return fmt.Errorf("lane name is required")
 			}
 			if !planModes[mode] {
-				return fmt.Errorf("mode %q is not one of inline, subagent, codex", mode)
+				return fmt.Errorf("mode %q is not one of inline, subagent, opencode", mode)
 			}
 			cc, err := openStore(cmd)
 			if err != nil {
@@ -145,7 +145,7 @@ func newPlanLaneAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&queue, "queue", "", "ordered bead ids, comma-separated")
-	cmd.Flags().StringVar(&mode, "mode", "subagent", "inline|subagent|codex")
+	cmd.Flags().StringVar(&mode, "mode", "subagent", "inline|subagent|opencode")
 	cmd.Flags().StringVar(&rulings, "rulings", "", "ruling ids in force for the lane, comma-separated")
 	return cmd
 }
